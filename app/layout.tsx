@@ -1,7 +1,13 @@
-import type { Metadata } from 'next';
-import { GeistSans } from 'geist/font/sans';
-import { GeistMono } from 'geist/font/mono';
-import './globals.css';
+import type React from "react"
+import type { Metadata } from "next"
+import { GeistSans } from "geist/font/sans"
+import { GeistMono } from "geist/font/mono"
+import { Analytics } from "@vercel/analytics/next"
+import { Suspense } from "react"
+import { ShortcutsProvider } from "@/context/shortcuts"
+import "./globals.css"
+
+
 
 // --- SEO ENHANCEMENTS ---
 // The metadata object is now much more detailed to provide search engines
@@ -77,15 +83,47 @@ export async function generateMetadata({ params }: { params: any }): Promise<Met
   }
 };
 
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode
-}>) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`}>
-      <head />
-      <body>{children}</body>
+    <html lang="en">
+      <body className={`font-sans ${GeistSans.variable} ${GeistMono.variable} h-full flex flex-col`}>
+        <ShortcutsProvider>
+          <Suspense fallback={<div>Loading...</div>}>
+            <div className="flex-1">{children}</div>
+          </Suspense>
+          <footer className="border-t bg-background text-muted-foreground">
+            <div className="mx-auto max-w-6xl px-4 py-6 flex flex-col md:flex-row items-center justify-between gap-3">
+              <p className="text-sm">
+                © {new Date().getFullYear()} DishIs Technologies —
+                <a href="https://dishis.tech" target="_blank" rel="noreferrer" className="underline ml-1">
+                  dishis.tech
+                </a>
+              </p>
+              <nav className="flex items-center gap-4 text-sm">
+                <a href="/privacy" className="hover:underline">
+                  Privacy
+                </a>
+                <a href="/terms" className="hover:underline">
+                  Terms
+                </a>
+                <a href="/changelog/redis" className="hover:underline">
+                  Changelog (Redis)
+                </a>
+                <a href="/changelog/mongodb" className="hover:underline">
+                  Changelog (MongoDB)
+                </a>
+                <a href="/mongodb" className="hover:underline">
+                  MongoDB Manager
+                </a>
+                <a href="/" className="hover:underline">
+                  Redis Tester
+                </a>
+              </nav>
+            </div>
+          </footer>
+          <Analytics />
+        </ShortcutsProvider>
+      </body>
     </html>
   )
 }

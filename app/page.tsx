@@ -1,5 +1,5 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { ExternalLink, DatabaseZap, Terminal, Code } from "lucide-react"; // Example icons
+import { ExternalLink, DatabaseZap, Terminal, Code, Database } from "lucide-react"; // Example icons
 import Link from 'next/link';
 
 // You can easily add more tools to this array
@@ -9,6 +9,12 @@ const tools = [
     description: "Quickly test and troubleshoot your Redis server connections online.",
     href: "/redis-tester", // The route to your tool page
     icon: <DatabaseZap className="h-8 w-8 text-primary" />,
+  },
+  {
+    title: "MongoDB Manager",
+    description: "Fully manage your MongoDB connections online.",
+    href: "/mongodb", // The route to your tool page
+    icon: <Database className="h-8 w-8 text-primary" />,
   },
   // --- Add your new tool objects here ---
   // {
@@ -53,28 +59,6 @@ export default function DIToolsHome() {
           ))}
         </div>
       </div>
-
-      {/* Footer */}
-      <footer className="bg-muted mt-auto py-8">
-        <div className="container mx-auto px-4">
-          <div className="text-center space-y-4">
-            <p className="text-muted-foreground">DITools by DishIs Technologies - Simple, fast, and reliable developer utilities.</p>
-            <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
-              <span>© {new Date().getFullYear()} DishIs Technologies</span>
-              <span>•</span>
-              <a
-                href="https://dishis.tech"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 hover:text-primary transition-colors"
-              >
-                dishis.tech
-                <ExternalLink className="h-3 w-3" />
-              </a>
-            </div>
-          </div>
-        </div>
-      </footer>
     </main>
   );
 }
