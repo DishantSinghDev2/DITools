@@ -1,4 +1,3 @@
-// components/mongodb/views/truncated-line.tsx
 "use client"
 
 import { useState, useRef, useLayoutEffect } from "react"
@@ -8,10 +7,9 @@ interface TruncatedLineProps {
   lineHtml: string
 }
 
-// Helper to get plain text for the tooltip
 const stripHtml = (html: string) => {
-  const doc = new DOMParser().parseFromString(html, 'text/html');
-  return doc.body.textContent || "";
+  const doc = new DOMParser().parseFromString(html, "text/html")
+  return doc.body.textContent || ""
 }
 
 export function TruncatedLine({ lineHtml }: TruncatedLineProps) {
@@ -21,31 +19,35 @@ export function TruncatedLine({ lineHtml }: TruncatedLineProps) {
 
   useLayoutEffect(() => {
     const checkTruncation = () => {
-      const element = lineRef.current
-      if (element) {
-        // If the scrollable width is greater than the visible width, it's truncated
-        const isOverflowing = element.scrollWidth > element.clientWidth
-        setIsTruncated(isOverflowing)
+      const el = lineRef.current
+      if (el) {
+        setIsTruncated(el.scrollWidth > el.clientWidth)
       }
     }
-    
-    checkTruncation()
 
-    // Use ResizeObserver for robust checking if the element's size changes
-    const observer = new ResizeObserver(checkTruncation)
-    if (lineRef.current) {
-        observer.observe(lineRef.current)
+    // Initial check (after paint)
+    const raf = requestAnimationFrame(checkTruncation)
+
+    // Watch for resizes
+    const resizeObserver = new ResizeObserver(checkTruncation)
+    if (lineRef.current) resizeObserver.observe(lineRef.current)
+
+    // Watch for content changes
+    const mutationObserver = new MutationObserver(checkTruncation)
+    if (lineRef.current) mutationObserver.observe(lineRef.current, { childList: true, characterData: true, subtree: true })
+
+    return () => {
+      cancelAnimationFrame(raf)
+      resizeObserver.disconnect()
+      mutationObserver.disconnect()
     }
-
-    // Cleanup
-    return () => observer.disconnect()
   }, [lineHtml])
 
   const lineContent = (
     <div
       ref={lineRef}
       className="truncate whitespace-pre"
-      dangerouslySetInnerHTML={{ __html: lineHtml || '&nbsp;' }}
+      dangerouslySetInnerHTML={{ __html: lineHtml || "&nbsp;" }}
     />
   )
 
@@ -62,6 +64,5 @@ export function TruncatedLine({ lineHtml }: TruncatedLineProps) {
     )
   }
 
-  // If not truncated, render the line without the tooltip wrapper
   return lineContent
 }

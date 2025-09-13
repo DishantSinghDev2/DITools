@@ -14,13 +14,28 @@ import { BulkOps } from "@/components/mongodb/bulk-ops"
 import { CommandConsole } from "@/components/mongodb/command-console"
 import { useShortcuts } from "@/context/shortcuts"
 import { WithShortcutTooltip } from "@/components/with-shortcut-tooltip"
-import { Keyboard, RefreshCw, Search, ChevronUp, ChevronDown, Pin, PinOff } from "lucide-react"
+import { Keyboard, RefreshCw, Search, ChevronUp, ChevronDown, Pin, PinOff, Filter } from "lucide-react"
 import { SidebarTree } from "@/components/mongodb/sidebar-tree"
 import { DocumentTabs, type DocTab } from "@/components/mongodb/document-tabs"
 import { DocumentViewer } from "@/components/mongodb/document-viewer"
 import { TerminalDock } from "@/components/mongodb/terminal-dock"
 import { ShortcutSettingsDialog } from "@/components/settings/shortcut-settings-dialog"
 import { cn } from "@/lib/utils"
+import { arrayMove } from "@dnd-kit/sortable" // Helper from dnd-kit
+
+
+// Import Dialog components from your UI library (e.g., shadcn/ui)
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+  DialogFooter,
+  DialogClose,
+} from "@/components/ui/dialog"
+import { Button } from "@/components/ui/button"
+
 
 type FindParams = {
   connStr: string
@@ -68,7 +83,7 @@ export default function MongoManagerPage() {
 
   const [highlightId, setHighlightId] = useState<string | null>(null)
   const [quickSearch, setQuickSearch] = useState("")
-  const [docTabs, setDocTabs] = useState<DocTab[]>([])
+  const [docTabs, setDocTabs] = useState<DocTab[]>([]) // State now uses the new DocTab type
   const [activeDocId, setActiveDocId] = useState<string | undefined>(undefined)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [leftW, setLeftW] = useState(280)
@@ -80,6 +95,8 @@ export default function MongoManagerPage() {
   // New state for header controls
   const [isHeaderToolsVisible, setIsHeaderToolsVisible] = useState(true)
   const [isHeaderPinned, setIsHeaderPinned] = useState(false)
+  const [isQueryBuilderOpen, setIsQueryBuilderOpen] = useState(false);
+
 
   useEffect(() => {
     function onMove(e: MouseEvent) {
@@ -206,6 +223,55 @@ export default function MongoManagerPage() {
     } catch { }
     await reloadFind()
   }
+
+  const handleReorderTabs = (activeId: string, overId: string) => {
+    setDocTabs((tabs) => {
+      const oldIndex = tabs.findIndex((t) => t.id === activeId)
+      const newIndex = tabs.findIndex((t) => t.id === overId)
+
+      // Ensure that pinned items can only be reordered with other pinned items,
+      // and unpinned with unpinned.
+      if (tabs[oldIndex].isPinned !== tabs[newIndex].isPinned) {
+        return tabs; // Don't allow moving between groups via drag
+      }
+
+      return arrayMove(tabs, oldIndex, newIndex)
+    })
+  }
+
+  // NEW: Handler for pinning/unpinning a tab
+  const handlePinTab = (tabId: string) => {
+    setDocTabs(tabs => {
+      const tabIndex = tabs.findIndex(t => t.id === tabId);
+      if (tabIndex === -1) return tabs;
+
+      const tabToUpdate = { ...tabs[tabIndex] };
+      const isNowPinned = !tabToUpdate.isPinned;
+      tabToUpdate.isPinned = isNowPinned;
+
+      // Remove the tab from its current position
+      const newTabs = [...tabs];
+      newTabs.splice(tabIndex, 1);
+
+      if (isNowPinned) {
+        // Find the last pinned tab and insert after it
+        const lastPinnedIndex = newTabs.findLastIndex(t => t.isPinned);
+        newTabs.splice(lastPinnedIndex + 1, 0, tabToUpdate);
+      } else {
+        // Find the first unpinned tab and insert before it
+        const firstUnpinnedIndex = newTabs.findIndex(t => !t.isPinned);
+        if (firstUnpinnedIndex === -1) {
+          // If all other tabs are pinned, add it to the end
+          newTabs.push(tabToUpdate);
+        } else {
+          newTabs.splice(firstUnpinnedIndex, 0, tabToUpdate);
+        }
+      }
+
+      return newTabs;
+    })
+  }
+
 
   async function runUpdateMany(payload: { filter: any; update: any; upsert?: boolean }) {
     await fetcher("/mongodb/api/updateMany", { connStr, db: selectedDb, collection: selectedColl, ...payload })
@@ -416,6 +482,7 @@ export default function MongoManagerPage() {
     }
   }, [registerAction, connStr, selectedDb, selectedColl, loadingFind])
 
+
   const filteredDocs = useMemo(() => {
     const docs = findResult?.docs ?? []
     const q = quickSearch.trim().toLowerCase()
@@ -425,7 +492,7 @@ export default function MongoManagerPage() {
 
   // prettier-ignore
   const viewOptions = [
-    ["Connections", "connections"], ["Query", "queryBuilder"], ["Results", "results"],
+    ["Sidebar", "connections"], ["Results", "results"],
     ["Details", "details"], ["Bulk", "bulkOps"], ["AI", "ai"]
   ]
 
@@ -486,8 +553,7 @@ export default function MongoManagerPage() {
               animate={{ height: "auto", opacity: 1 }}
               exit={{ height: 0, opacity: 0 }}
               className="overflow-hidden"
-            >
-              <div className="border-t p-4 space-y-4">
+            >              <div className="border-t p-4 space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
                   <ConnectionsManager
                     current={connStr}
@@ -516,8 +582,8 @@ export default function MongoManagerPage() {
                         className="ml-2 rounded-md border px-2.5 py-1.5 hover:bg-muted text-xs"
                         onClick={() =>
                           setView({
-                            connections: true, queryBuilder: true, results: true, details: true,
-                            bulkOps: true, console: true, ai: true
+                            connections: true, results: true, details: true,
+                            bulkOps: true, console: true, ai: true, queryBuilder: true
                           })
                         }
                       >
@@ -526,6 +592,7 @@ export default function MongoManagerPage() {
                     </div>
                   </div>
                 </div>
+
 
                 <div className="rounded-md border bg-background text-card-foreground p-3">
                   <p className="text-sm font-medium">Security & Privacy</p>
@@ -585,90 +652,109 @@ export default function MongoManagerPage() {
               onActivate={(id) => setActiveDocId(id)}
               onClose={(id) => {
                 setDocTabs((t) => t.filter((x) => x.id !== id))
-                if (activeDocId === id) setActiveDocId(undefined)
+                if (activeDocId === id) {
+                  // Activate the previous tab or clear if it was the last one
+                  const closingTabIndex = docTabs.findIndex(t => t.id === id);
+                  const nextActiveTab = docTabs[closingTabIndex - 1] || docTabs[0];
+                  setActiveDocId(nextActiveTab?.id);
+                }
               }}
+              onReorder={handleReorderTabs} // Pass the new handler
+              onPin={handlePinTab}           // Pass the new handler
               className="border-b"
             />
-            <div className={cn(
-              "flex-1 grid min-h-0",
-              view.queryBuilder && view.results ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1"
-            )}>
-              {view.queryBuilder && (
-                <div className="border-r p-3 flex flex-col gap-3">
-                  <div>
-                    <label className="text-xs font-medium">Filter (JSON)</label>
-                    <textarea value={filter} onChange={(e) => setFilter(e.target.value)} rows={6} className="w-full rounded-md border bg-background px-2 py-1.5 text-sm font-mono" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-xs font-medium">Projection</label>
-                      <textarea value={projection} onChange={(e) => setProjection(e.target.value)} rows={2} className="w-full rounded-md border bg-background px-2 py-1.5 text-sm font-mono" />
-                    </div>
-                    <div>
-                      <label className="text-xs font-medium">Sort</label>
-                      <textarea value={sort} onChange={(e) => setSort(e.target.value)} rows={2} className="w-full rounded-md border bg-background px-2 py-1.5 text-sm font-mono" />
-                    </div>
-                    <div>
-                      <label className="text-xs font-medium">Limit</label>
-                      <input type="number" value={limit} min={1} max={5000} onChange={(e) => setLimit(Number(e.target.value))} className="w-full rounded-md border bg-background px-2 py-1.5 text-sm" />
-                    </div>
-                    <div>
-                      <label className="text-xs font-medium">Skip</label>
-                      <input type="number" value={skip} min={0} onChange={(e) => setSkip(Number(e.target.value))} className="w-full rounded-md border bg-background px-2 py-1.5 text-sm" />
-                    </div>
-                  </div>
-                  <div className="col-span-2 flex items-center gap-2 flex-wrap">
-                    <WithShortcutTooltip actionId="mongo.run-query" label="Run Find">
-                      <button
-                        // FIX: Use the new handler
-                        onClick={handleRunQuery}
-                        disabled={!connStr || !selectedDb || !selectedColl || loadingFind}
-                        className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-60"
-                      >
-                        {loadingFind ? "Running…" : "Run Find"}
-                      </button>
-                    </WithShortcutTooltip>
-                    <button onClick={downloadJSON} disabled={!findResult?.docs?.length} className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-60">Export JSON</button>
-                    <button onClick={downloadCSV} disabled={!findResult?.docs?.length} className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-60">Export CSV</button>
-                    <div className="ml-auto flex items-center gap-2">
-                      <WithShortcutTooltip actionId="mongo.page-prev" label="Prev">
-                        <button onClick={prevPage} disabled={!connStr || !selectedDb || !selectedColl || loadingFind || skip <= 0} className="rounded-md border px-2 py-1 text-xs hover:bg-muted disabled:opacity-60">Prev</button>
-                      </WithShortcutTooltip>
-                      <span className="text-xs text-muted-foreground">Page {page}</span>
-                      <WithShortcutTooltip actionId="mongo.page-next" label="Next">
-                        <button onClick={nextPage} disabled={!connStr || !selectedDb || !selectedColl || loadingFind || (findResult?.docs?.length ?? 0) < limit} className="rounded-md border px-2 py-1 text-xs hover:bg-muted disabled:opacity-60">Next</button>
-                      </WithShortcutTooltip>
-                    </div>
-                  </div>
-                </div>
-              )}
-
+            {/* LAYOUT SIMPLIFIED: No more grid, results view takes all available space */}
+            <div className="flex-1 min-h-0">
               {view.results && (
-                <div className="flex flex-col min-h-0 w-full p-3 relative min-w-0">
+                <div className="flex flex-col h-full w-full p-3 relative min-w-0">
                   <div className="mb-2 flex items-center gap-2 shrink-0">
                     <div className="relative flex-1">
                       <input value={quickSearch} onChange={(e) => setQuickSearch(e.target.value)} placeholder="Search within results (client-side)" className="w-full rounded-md border bg-background pl-8 pr-2 py-1.5 text-sm" />
                       <Search className="h-4 w-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
                     </div>
+
+                    {/* DIALOG FOR QUERY BUILDER */}
+                    <Dialog open={isQueryBuilderOpen} onOpenChange={setIsQueryBuilderOpen}>
+                      <DialogTrigger asChild>
+                        <Button variant="outline" size="sm" className="inline-flex items-center gap-1.5">
+                          <Filter className="h-4 w-4" />
+                          Filter & Sort
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent className="sm:max-w-2xl">
+                        <DialogHeader>
+                          <DialogTitle>Query Builder</DialogTitle>
+                        </DialogHeader>
+                        <div className="grid gap-4 py-4">
+                          <div>
+                            <label className="text-sm font-medium">Filter (JSON)</label>
+                            <textarea value={filter} onChange={(e) => setFilter(e.target.value)} rows={8} className="mt-1 w-full rounded-md border bg-background px-2 py-1.5 text-sm font-mono" />
+                          </div>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <label className="text-sm font-medium">Projection</label>
+                              <textarea value={projection} onChange={(e) => setProjection(e.target.value)} rows={3} className="mt-1 w-full rounded-md border bg-background px-2 py-1.5 text-sm font-mono" />
+                            </div>
+                            <div>
+                              <label className="text-sm font-medium">Sort</label>
+                              <textarea value={sort} onChange={(e) => setSort(e.target.value)} rows={3} className="mt-1 w-full rounded-md border bg-background px-2 py-1.5 text-sm font-mono" />
+                            </div>
+                            <div>
+                              <label className="text-sm font-medium">Limit</label>
+                              <input type="number" value={limit} min={1} max={5000} onChange={(e) => setLimit(Number(e.target.value))} className="mt-1 w-full rounded-md border bg-background px-2 py-1.5 text-sm" />
+                            </div>
+                            <div>
+                              <label className="text-sm font-medium">Skip</label>
+                              <input type="number" value={skip} min={0} onChange={(e) => setSkip(Number(e.target.value))} className="mt-1 w-full rounded-md border bg-background px-2 py-1.5 text-sm" />
+                            </div>
+                          </div>
+                        </div>
+                        <DialogFooter>
+                          <div className="w-full flex items-center justify-between">
+                            <div>
+                              <Button variant="ghost" onClick={downloadJSON} disabled={!findResult?.docs?.length}>Export JSON</Button>
+                              <Button variant="ghost" onClick={downloadCSV} disabled={!findResult?.docs?.length}>Export CSV</Button>
+                            </div>
+                            <Button
+                              onClick={handleRunQuery}
+                              disabled={!connStr || !selectedDb || !selectedColl || loadingFind}
+                            >
+                              {loadingFind ? "Running…" : "Run Find"}
+                            </Button>
+                          </div>
+                        </DialogFooter>
+                      </DialogContent>
+                    </Dialog>
+
                     <button onClick={() => reloadFind()} disabled={!connStr || !selectedDb || !selectedColl || loadingFind} className="inline-flex items-center gap-1 rounded-md border px-2 py-1.5 text-xs hover:bg-muted disabled:opacity-60" title="Refresh results">
                       <RefreshCw className={cn("h-3.5 w-3.5", loadingFind && "animate-spin")} />
-                      Refresh
+                      <span className="hidden sm:inline">Refresh</span>
                     </button>
                   </div>
+
                   {findError && <p className="text-xs text-red-500 break-all mb-2 shrink-0">{String(findError.message || findError)}</p>}
+
                   <div className="flex-1 min-h-0">
-                    <DataGrid docs={filteredDocs} collection={selectedColl} isLoading={loadingFind} onUpdateDoc={handleUpdateDoc} onDeleteDoc={handleDeleteDoc} onDuplicateDoc={handleDuplicateDoc} onBulkDelete={handleBulkDelete} page={Math.floor(skip / limit) + 1} limit={limit} 
-                      // FIX: Pass the total document count from the new API call
+                    <DataGrid
+                      docs={filteredDocs}
+                      collection={selectedColl}
+                      isLoading={loadingFind}
+                      onUpdateDoc={handleUpdateDoc}
+                      onDeleteDoc={handleDeleteDoc}
+                      onDuplicateDoc={handleDuplicateDoc}
+                      onBulkDelete={handleBulkDelete}
+                      page={Math.floor(skip / limit) + 1}
+                      limit={limit}
                       totalDocs={countResult?.count ?? 0}
                       onPageChange={handlePageChange}
- />
+                    />
                   </div>
                 </div>
               )}
             </div>
 
             {!!activeDocId && connStr && selectedDb && selectedColl && (
-              <div className="border-t p-3">
+              <div className="border-t p-3 bg-background">
                 <DocumentViewer connectionString={connStr} db={selectedDb} collection={selectedColl} id={activeDocId} />
               </div>
             )}
