@@ -1,23 +1,27 @@
-// components/mongodb/sidebar-tree.tsx
 "use client"
 
 import { useEffect, useMemo, useState, useCallback } from "react"
 import useSWR from "swr"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { ChevronDown, ChevronRight, Database, Folder, FileText, RefreshCw, Search, PanelLeftClose, PanelLeftOpen, AlertTriangle } from "lucide-react"
+import {
+  ChevronDown,
+  ChevronRight,
+  Database,
+  Folder,
+  RefreshCw,
+  Search,
+  PanelLeftClose,
+  PanelLeftOpen,
+  AlertTriangle,
+} from "lucide-react"
 import { cn } from "@/lib/utils"
 import { AnimatePresence, motion } from "framer-motion"
 
-// --- Enhanced Type Definitions ---
+// --- Type Definitions ---
 type DbItem = { name: string }
 type CollItem = { name: string }
-type MongoID = string | { $oid: string } | object
-type DocItem = { _id: MongoID }
-
-type ApiResponse_Dbs = { databases: string[] | DbItem[] }
-type ApiResponse_Colls = { collections: string[] | CollItem[] }
-type ApiResponse_Docs = { docs: DocItem[] }
+type ApiResponse<T> = { [key: string]: T[] }
 
 type SidebarTreeProps = {
   connStr: string
@@ -30,8 +34,31 @@ type SidebarTreeProps = {
   onToggleCollapse: () => void
 }
 
+type DatabaseNodeProps = {
+  db: DbItem
+  connStr: string
+  isOpen: boolean
+  isActive: boolean
+  activeColl?: string
+  onToggle: () => void
+  onSelectDatabase: (db: string) => void
+  onSelectCollection: (db: string, coll: string) => void
+}
+
+type CollectionNodeProps = {
+  dbName: string
+  coll: CollItem
+  isActive: boolean
+  onSelectCollection: (db: string, coll: string) => void
+}
+
+type ErrorMessageProps = {
+  message: string
+  isNested?: boolean
+}
+
 // --- Utility Functions ---
-const fetcher = async (url: string, body: object) => {
+const fetcher = async <T,>(url: string, body: object): Promise<T> => {
   const res = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -44,7 +71,7 @@ const fetcher = async (url: string, body: object) => {
   return res.json()
 }
 
-const parseHost = (str: string) => {
+const parseHost = (str: string): string => {
   if (!str) return ""
   try {
     const atIndex = str.indexOf("@")
@@ -57,17 +84,6 @@ const parseHost = (str: string) => {
     return str
   }
 }
-
-const normalizeDocId = (id: MongoID): string => {
-  if (typeof id === "string") return id
-  if (id && typeof id === "object") {
-    if ('$oid' in id && typeof id.$oid === 'string') return id.$oid
-    return JSON.stringify(id) // Fallback for complex ObjectIDs
-  }
-  return String(id)
-}
-
-// --- Main Component ---
 
 // --- Main Component ---
 export function SidebarTree({
@@ -85,53 +101,68 @@ export function SidebarTree({
 
   useEffect(() => {
     if (activeDb) {
-      setExpanded(prev => ({ ...prev, [activeDb]: true }))
+      setExpanded((prev) => ({ ...prev, [activeDb]: true }))
     }
   }, [activeDb])
 
-  const { data: serverInfo, mutate: reloadServer } = useSWR(
+  const { data: serverInfo, mutate: reloadServer, isLoading: serverLoading } = useSWR<{ version: string }>(
     connStr ? ["/mongodb/api/serverInfo", { connStr }] : null,
-    ([url, body]) => fetcher(url, body)
+    ([url, body]) => fetcher<{ version: string }>(url, body),
   )
 
-  const { data: dbsResponse, error: dbsError, isLoading: dbsLoading, mutate: reloadDbs } = useSWR<ApiResponse_Dbs>(
+  const { data: dbsResponse, error: dbsError, isLoading: dbsLoading, mutate: reloadDbs } = useSWR<ApiResponse<DbItem | string>>(
     connStr ? ["/mongodb/api/databases", { connStr }] : null,
-    ([url, body]) => fetcher(url, body)
+    ([url, body]) => fetcher<ApiResponse<DbItem | string>>(url, body),
   )
 
   const handleRefresh = useCallback(() => {
+    if (!connStr) return
     reloadServer()
     reloadDbs()
-  }, [reloadServer, reloadDbs])
+  }, [connStr, reloadServer, reloadDbs])
 
-  const databases = useMemo((): DbItem[] => {
-    if (!dbsResponse?.databases) return []
-    // Handle both ["db1"] and [{name: "db1"}] formats
-    return dbsResponse.databases.map(db => (typeof db === 'string' ? { name: db } : db))
+  const databases: DbItem[] = useMemo(() => {
+    const dbs = dbsResponse?.databases ?? []
+    return dbs.map((db) => (typeof db === "string" ? { name: db } : db))
   }, [dbsResponse])
 
   const filteredDbs = useMemo(() => {
     if (!filterText.trim()) return databases
     const lowercasedFilter = filterText.toLowerCase()
-    return databases.filter(db => db.name.toLowerCase().includes(lowercasedFilter))
+    return databases.filter((db) => db.name.toLowerCase().includes(lowercasedFilter))
   }, [databases, filterText])
 
+  const isLoading = dbsLoading || serverLoading
   const host = parseHost(connStr)
-  const version = serverInfo?.version || "N/A"
+  const version = serverInfo?.version || "..."
 
   if (isCollapsed) {
     return (
-      <aside className="w-14 shrink-0 border-r bg-background" aria-label="Collections Sidebar (Collapsed)">
+      <aside
+        className="w-14 shrink-0 border-r bg-background h-full"
+        aria-label="Collections Sidebar (Collapsed)"
+      >
         <TooltipProvider delayDuration={0}>
           <div className="flex flex-col items-center p-2 space-y-2">
-            <Button variant="ghost" size="icon" onClick={onToggleCollapse} title="Expand Sidebar">
-              <PanelLeftOpen className="h-4 w-4" />
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onToggleCollapse}
+              title="Expand Sidebar"
+            >
+              <PanelLeftOpen className="h-5 w-5" />
             </Button>
-            <Button variant="ghost" size="icon" onClick={handleRefresh} disabled={!connStr} title="Refresh">
-              <RefreshCw className="h-4 w-4" />
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleRefresh}
+              disabled={!connStr || isLoading}
+              title="Refresh"
+            >
+              <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
             </Button>
             <hr className="w-full border-border" />
-            {databases.map(db => (
+            {databases.map((db) => (
               <Tooltip key={db.name}>
                 <TooltipTrigger asChild>
                   <Button
@@ -152,16 +183,24 @@ export function SidebarTree({
   }
 
   return (
-    <aside className="w-full md:w-72 shrink-0 border-r bg-background flex flex-col" aria-label="Collections Sidebar">
+    <aside className="w-full h-full bg-background flex flex-col" aria-label="Collections Sidebar">
       <div className="border-b p-2">
         <div className="flex items-start justify-between">
           <div className="min-w-0">
             <div className="text-xs text-muted-foreground">Connected to</div>
-            <div className="text-sm font-medium truncate" title={host}>{host || "(not connected)"}</div>
+            <div className="text-sm font-medium truncate" title={host}>
+              {host || "(not connected)"}
+            </div>
             <div className="text-xs text-muted-foreground">MongoDB v{version}</div>
           </div>
-          <Button variant="ghost" size="icon" onClick={onToggleCollapse} title="Collapse Sidebar" className="shrink-0">
-            <PanelLeftClose className="h-4 w-4" />
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onToggleCollapse}
+            title="Collapse Sidebar"
+            className="shrink-0"
+          >
+            <PanelLeftClose className="h-5 w-5" />
           </Button>
         </div>
         <div className="mt-2 flex items-center gap-2">
@@ -174,18 +213,33 @@ export function SidebarTree({
             />
             <Search className="h-4 w-4 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
           </div>
-          <Button variant="ghost" size="icon" onClick={handleRefresh} disabled={!connStr} title="Refresh">
-            <RefreshCw className="h-4 w-4" />
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={handleRefresh}
+            disabled={!connStr || isLoading}
+            title="Refresh"
+          >
+            <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
           </Button>
         </div>
       </div>
 
       <div className="p-1 overflow-y-auto flex-1">
-        {dbsLoading && <div className="text-xs text-muted-foreground px-2">Loading databases...</div>}
+        {dbsLoading && (
+          <div className="text-xs text-muted-foreground px-2 py-1">
+            Loading databases...
+          </div>
+        )}
         {dbsError && <ErrorMessage message={dbsError.message} />}
+        {!dbsLoading && !dbsError && filteredDbs.length === 0 && (
+          <div className="text-xs text-muted-foreground px-2 py-1">
+            No databases found.
+          </div>
+        )}
         {filteredDbs.length > 0 && (
           <ul className="space-y-0.5">
-            {filteredDbs.map(db => (
+            {filteredDbs.map((db) => (
               <DatabaseNode
                 key={db.name}
                 db={db}
@@ -193,10 +247,11 @@ export function SidebarTree({
                 isOpen={!!expanded[db.name]}
                 isActive={activeDb === db.name}
                 activeColl={activeColl}
-                onToggle={() => setExpanded(prev => ({ ...prev, [db.name]: !prev[db.name] }))}
+                onToggle={() =>
+                  setExpanded((prev) => ({ ...prev, [db.name]: !prev[db.name] }))
+                }
                 onSelectDatabase={onSelectDatabase}
                 onSelectCollection={onSelectCollection}
-                onSelectDocument={onSelectDocument}
               />
             ))}
           </ul>
@@ -206,21 +261,29 @@ export function SidebarTree({
   )
 }
 
+// --- Sub-Components ---
 
-// --- Sub-Components for Tree Nodes ---
-
-function DatabaseNode({ db, connStr, isOpen, isActive, activeColl, onToggle, onSelectDatabase, onSelectCollection, onSelectDocument }) {
-  const { data: collsResponse, error, isLoading } = useSWR<ApiResponse_Colls>(
-    connStr && db.name && isOpen ? ["/mongodb/api/collections", { connStr, db: db.name }] : null,
-    ([url, body]) => fetcher(url, body), { revalidateOnFocus: false }
+function DatabaseNode({
+  db,
+  connStr,
+  isOpen,
+  isActive,
+  activeColl,
+  onToggle,
+  onSelectDatabase,
+  onSelectCollection,
+}: DatabaseNodeProps) {
+  const { data: collsResponse, error, isLoading } = useSWR<ApiResponse<CollItem | string>>(
+    connStr && db.name && isOpen
+      ? ["/mongodb/api/collections", { connStr, db: db.name }]
+      : null,
+    ([url, body]) => fetcher<ApiResponse<CollItem | string>>(url, body),
+    { revalidateOnFocus: false },
   )
 
-  const collections = useMemo((): CollItem[] => {
-    if (!collsResponse?.collections) return []
-    // This is the FIX: Handle both ["coll1"] and [{name: "coll1"}] formats
-    return collsResponse.collections.map(coll => 
-      typeof coll === 'string' ? { name: coll } : coll
-    )
+  const collections: CollItem[] = useMemo(() => {
+    const colls = collsResponse?.collections ?? []
+    return colls.map((coll) => (typeof coll === "string" ? { name: coll } : coll))
   }, [collsResponse])
 
   const handleClick = () => {
@@ -231,10 +294,17 @@ function DatabaseNode({ db, connStr, isOpen, isActive, activeColl, onToggle, onS
   return (
     <li>
       <div
-        className={cn("flex items-center gap-1.5 px-2 py-1.5 hover:bg-muted/50 rounded cursor-pointer", isActive && "bg-muted")}
+        className={cn(
+          "flex items-center gap-1.5 px-2 py-1.5 hover:bg-muted/50 rounded cursor-pointer",
+          isActive && "bg-muted",
+        )}
         onClick={handleClick}
       >
-        {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        {isOpen ? (
+          <ChevronDown className="h-4 w-4" />
+        ) : (
+          <ChevronRight className="h-4 w-4" />
+        )}
         <Database className="h-4 w-4 text-amber-600" />
         <span className="text-sm font-medium flex-1 truncate">{db.name}</span>
       </div>
@@ -248,19 +318,26 @@ function DatabaseNode({ db, connStr, isOpen, isActive, activeColl, onToggle, onS
             className="overflow-hidden"
           >
             <ul className="ml-6 mt-1 space-y-1 pl-1 border-l border-dashed">
-              {isLoading && <li className="text-xs text-muted-foreground px-2">Loading...</li>}
+              {isLoading && (
+                <li className="text-xs text-muted-foreground px-2 py-1">
+                  Loading...
+                </li>
+              )}
               {error && <ErrorMessage message={error.message} isNested />}
-              {collections.map(c => (
+              {collections.map((c) => (
                 <CollectionNode
                   key={c.name}
                   dbName={db.name}
                   coll={c}
                   isActive={isActive && activeColl === c.name}
                   onSelectCollection={onSelectCollection}
-                  onSelectDocument={onSelectDocument}
                 />
               ))}
-              {!isLoading && collections.length === 0 && <li className="text-xs text-muted-foreground px-2 py-1">No collections</li>}
+              {!isLoading && collections.length === 0 && (
+                <li className="text-xs text-muted-foreground px-2 py-1">
+                  No collections
+                </li>
+              )}
             </ul>
           </motion.div>
         )}
@@ -269,29 +346,21 @@ function DatabaseNode({ db, connStr, isOpen, isActive, activeColl, onToggle, onS
   )
 }
 
-function CollectionNode({ dbName, coll, isActive, onSelectCollection, onSelectDocument }) {
-  // IMPORTANT: This node no longer fetches documents. It only triggers the action.
-  // The main page is responsible for fetching and displaying documents.
-  // We can add back a small document list later if needed for quick navigation.
-  
-  const handleClick = () => {
-    // This is the CORE CHANGE:
-    // When a collection is clicked, it immediately calls the onSelectCollection prop.
-    // This tells the parent page (MongoManagerPage) to fetch the documents
-    // for this collection and display them in the main DataGrid.
-    onSelectCollection(dbName, coll.name)
-  }
-
+function CollectionNode({
+  dbName,
+  coll,
+  isActive,
+  onSelectCollection,
+}: CollectionNodeProps) {
   return (
     <li>
       <div
         className={cn(
-          "flex items-center gap-1.5 px-2 py-1.5 hover:bg-muted/50 rounded cursor-pointer",
-          isActive && "bg-primary/10 text-primary font-semibold"
+          "flex items-center gap-1.5 px-2 py-1.5 hover:bg-primary/10 rounded cursor-pointer",
+          isActive && "bg-primary/15 hover:bg-primary/15 text-primary font-semibold",
         )}
-        onClick={handleClick}
+        onClick={() => onSelectCollection(dbName, coll.name)}
       >
-        {/* We can remove the chevron as we are not expanding this node anymore */}
         <Folder className="h-4 w-4 text-sky-600 shrink-0" />
         <span className="text-sm flex-1 truncate">{coll.name}</span>
       </div>
@@ -299,6 +368,16 @@ function CollectionNode({ dbName, coll, isActive, onSelectCollection, onSelectDo
   )
 }
 
-function ErrorMessage({ message, isNested = false }: { message: string; isNested?: boolean }) {
-    // ... (Error message component remains the same) ...
+function ErrorMessage({ message, isNested = false }: ErrorMessageProps) {
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-2 text-xs text-red-500 p-2",
+        isNested ? "ml-2" : "bg-red-500/10 rounded-md",
+      )}
+    >
+      <AlertTriangle className="h-4 w-4 shrink-0" />
+      <span className="break-all">{message}</span>
+    </div>
+  )
 }

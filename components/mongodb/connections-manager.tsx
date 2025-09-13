@@ -15,8 +15,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
-import { v4 as uuidv4 } from 'uuid';
-
+import { v4 as uuidv4 } from "uuid"
 
 type Profile = {
   id: string
@@ -30,39 +29,41 @@ const LS_KEY = "mongo-manager:profiles"
 function maskConnStr(uri: string) {
   try {
     const u = new URL(uri.replace("mongodb+srv://", "https://").replace("mongodb://", "http://"))
-    const user = u.username ? "***" : ""
-    const pass = u.password ? "***" : ""
-    const proto = uri.startsWith("mongodb+srv://") ? "mongodb+srv://" : uri.startsWith("mongodb://") ? "mongodb://" : ""
-    const auth = u.username || u.password ? `${user}:${pass}@` : ""
+    const proto = uri.startsWith("mongodb+srv://")
+      ? "mongodb+srv://"
+      : uri.startsWith("mongodb://")
+      ? "mongodb://"
+      : ""
     const host = u.host
-    const path = u.pathname === "/" ? "" : u.pathname
-    const search = u.search
-    return `${proto}${auth}${host}${path}${search}`
+    return `${proto}${host}${u.pathname === "/" ? "" : u.pathname}${u.search}`
   } catch {
-    return uri.replace(/:\/\/([^@]+)@/g, "://***:***@")
+    return uri
+  }
+}
+
+function isValidMongoUrl(uri: string) {
+  try {
+    if (!uri.startsWith("mongodb://") && !uri.startsWith("mongodb+srv://")) return false
+    new URL(uri.replace("mongodb+srv://", "https://").replace("mongodb://", "http://"))
+    return true
+  } catch {
+    return false
   }
 }
 
 export function ConnectionsManager({
   current,
   onConnStrChange,
-  remember,
-  onRememberChange,
 }: {
   current: string
   onConnStrChange: (connStr: string) => void
-  remember: boolean
-  onRememberChange: (remember: boolean) => void
 }) {
   const [profiles, setProfiles] = useState<Profile[]>([])
+  const [connStr, setConnStr] = useState(current)
   const [name, setName] = useState("")
-  const [toSave, setToSave] = useState(true)
   const [open, setOpen] = useState(false)
-  const [dialogConnStr, setDialogConnStr] = useState(current)
 
-  useEffect(() => {
-    setDialogConnStr(current)
-  }, [current])
+  useEffect(() => setConnStr(current), [current])
 
   useEffect(() => {
     try {
@@ -83,9 +84,8 @@ export function ConnectionsManager({
   }, [profiles, current])
 
   function saveProfile() {
-    if (!name.trim() || !dialogConnStr.trim()) return
+    if (!name.trim() || !isValidMongoUrl(connStr)) return
     const id = uuidv4()
-    const connStr = toSave ? dialogConnStr : ""
     setProfiles((prev) => [...prev, { id, name: name.trim(), connStr, createdAt: Date.now() }])
     setName("")
   }
@@ -94,13 +94,9 @@ export function ConnectionsManager({
     setProfiles((prev) => prev.filter((p) => p.id !== id))
   }
 
-  function loadProfile(p: Profile) {
-    if (!p.connStr) return
-    setDialogConnStr(p.connStr)
-  }
-
   function handleConnect() {
-    onConnStrChange(dialogConnStr)
+    if (!isValidMongoUrl(connStr)) return alert("Invalid MongoDB connection string")
+    onConnStrChange(connStr)
     setOpen(false)
   }
 
@@ -119,61 +115,50 @@ export function ConnectionsManager({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Manage Connection</DialogTitle>
-          <DialogDescription>Enter a connection string or choose a saved profile.</DialogDescription>
+          <DialogDescription>Enter a MongoDB URI or select a saved profile.</DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-2">
+        <div className="space-y-3">
           <Label htmlFor="conn-str">Connection String</Label>
           <Input
             id="conn-str"
-            type="password"
-            value={dialogConnStr}
-            onChange={(e) => setDialogConnStr(e.target.value)}
+            type="text"
+            value={connStr}
+            onChange={(e) => setConnStr(e.target.value)}
             placeholder="mongodb+srv://user:pass@host/"
           />
-          <div className="flex items-center gap-2">
-            <input
-              id="remember-dialog"
-              type="checkbox"
-              checked={remember}
-              onChange={(e) => onRememberChange(e.target.checked)}
-            />
-            <Label htmlFor="remember-dialog" className="text-xs font-normal text-muted-foreground">
-              Remember in this browser
-            </Label>
-          </div>
         </div>
 
-        <div className="space-y-4 pt-4">
-          <h4 className="font-medium text-sm">Connection Profiles</h4>
-          <div className="space-y-2">
-            <Input placeholder="Name current connection to save it" value={name} onChange={(e) => setName(e.target.value)} />
-            <div className="flex items-center gap-2">
-              <input id="save-secret" type="checkbox" checked={toSave} onChange={(e) => setToSave(e.target.checked)} />
-              <Label htmlFor="save-secret" className="text-xs font-normal text-muted-foreground">
-                Store connection string
-              </Label>
-              <Button className="ml-auto" size="sm" onClick={saveProfile} disabled={!name.trim() || !dialogConnStr.trim()}>
-                Save
-              </Button>
-            </div>
+        <div className="space-y-3 pt-4">
+          <h4 className="font-medium text-sm">Saved Profiles</h4>
+          <div className="flex gap-2">
+            <Input
+              placeholder="Profile name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+            <Button size="sm" onClick={saveProfile} disabled={!name.trim() || !isValidMongoUrl(connStr)}>
+              Save
+            </Button>
           </div>
 
           <div className="space-y-1 max-h-40 overflow-auto">
-            {profiles.length === 0 && <p className="text-xs text-muted-foreground">No saved profiles yet.</p>}
+            {profiles.length === 0 && (
+              <p className="text-xs text-muted-foreground">No saved profiles.</p>
+            )}
             {profiles.map((p) => (
               <div
                 key={p.id}
                 className={cn(
                   "rounded border p-2 text-xs flex items-center gap-2",
-                  activeId === p.id ? "border-primary" : "border-border",
+                  activeId === p.id ? "border-primary" : "border-border"
                 )}
               >
                 <div className="min-w-0 flex-1 max-w-56">
                   <p className="font-medium truncate">{p.name}</p>
-                  <p className="text-muted-foreground truncate">{p.connStr ? maskConnStr(p.connStr) : "Not stored"}</p>
+                  <p className="text-muted-foreground truncate">{maskConnStr(p.connStr)}</p>
                 </div>
-                <Button size="sm" variant="outline" onClick={() => loadProfile(p)} disabled={!p.connStr}>
+                <Button size="sm" variant="outline" onClick={() => setConnStr(p.connStr)}>
                   Load
                 </Button>
                 <Button size="sm" variant="destructive" onClick={() => removeProfile(p.id)}>
@@ -184,51 +169,13 @@ export function ConnectionsManager({
           </div>
         </div>
 
-        <DialogFooter className="flex-col-reverse sm:flex-row sm:justify-between gap-2">
-          <div>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => {
-                const blob = new Blob([JSON.stringify(profiles, null, 2)], { type: "application/json" })
-                const url = URL.createObjectURL(blob)
-                const a = document.createElement("a")
-                a.href = url
-                a.download = "mongo-connections.json"
-                a.click()
-                URL.revokeObjectURL(url)
-              }}
-            >
-              Export
-            </Button>
-            <Label className="text-sm ml-2">
-              <input
-                type="file"
-                accept=".json,application/json"
-                className="hidden"
-                onChange={async (e) => {
-                  const file = e.target.files?.[0]
-                  if (!file) return
-                  const text = await file.text()
-                  try {
-                    const imported = JSON.parse(text) as Profile[]
-                    if (Array.isArray(imported)) setProfiles(imported)
-                  } catch {}
-                }}
-              />
-              <span className="cursor-pointer underline">Import</span>
-            </Label>
-          </div>
-          <div className="flex justify-end gap-2">
-            <DialogClose asChild>
-              <Button type="button" variant="secondary">
-                Cancel
-              </Button>
-            </DialogClose>
-            <Button type="button" onClick={handleConnect} disabled={!dialogConnStr}>
-              Connect
-            </Button>
-          </div>
+        <DialogFooter className="flex justify-end gap-2">
+          <DialogClose asChild>
+            <Button type="button" variant="secondary">Cancel</Button>
+          </DialogClose>
+          <Button type="button" onClick={handleConnect} disabled={!isValidMongoUrl(connStr)}>
+            Connect
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
