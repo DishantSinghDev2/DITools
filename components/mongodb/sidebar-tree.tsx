@@ -1,316 +1,56 @@
+// components/mongodb/sidebar-tree.tsx
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState, useCallback } from "react"
 import useSWR from "swr"
 import { Button } from "@/components/ui/button"
-import { ChevronDown, ChevronRight, Database, Folder, FileText, RefreshCw, Search } from "lucide-react"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { ChevronDown, ChevronRight, Database, Folder, FileText, RefreshCw, Search, PanelLeftClose, PanelLeftOpen, AlertTriangle } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { AnimatePresence, motion } from "framer-motion"
 
+// --- Enhanced Type Definitions ---
+type DbItem = { name: string }
+type CollItem = { name: string }
+type MongoID = string | { $oid: string } | object
+type DocItem = { _id: MongoID }
+
+type ApiResponse_Dbs = { databases: string[] | DbItem[] }
+type ApiResponse_Colls = { collections: string[] | CollItem[] }
+type ApiResponse_Docs = { docs: DocItem[] }
+
 type SidebarTreeProps = {
-  className?: string
-  connStr?: string
-  onSelectDatabase?: (db: string) => void
-  onSelectCollection?: (db: string, coll: string) => void
-  onSelectDocument?: (db: string, coll: string, id: string) => void
+  connStr: string
+  activeDb?: string
+  activeColl?: string
+  isCollapsed: boolean
+  onSelectDatabase: (db: string) => void
+  onSelectCollection: (db: string, coll: string) => void
+  onSelectDocument: (db: string, coll: string, id: string) => void
+  onToggleCollapse: () => void
 }
 
-type DbItem = {
-  name: string
-}
-
-type CollItem = {
-  name: string
-}
-
-type DocId = { _id: string }
-
-const fetcher = async (url: string, body: any) => {
+// --- Utility Functions ---
+const fetcher = async (url: string, body: object) => {
   const res = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   })
-  if (!res.ok) throw new Error(await res.text())
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(errorText || "An error occurred.")
+  }
   return res.json()
 }
 
-export function SidebarTree({
-  className,
-  connStr,
-  onSelectDatabase,
-  onSelectCollection,
-  onSelectDocument,
-}: SidebarTreeProps) {
-  const [activeConn, setActiveConn] = useState<string>("")
-  useEffect(() => {
-    setActiveConn(connStr ?? activeConn)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connStr])
-
-  const [expandedDb, setExpandedDb] = useState<Record<string, boolean>>({})
-  const [expandedColl, setExpandedColl] = useState<Record<string, boolean>>({})
-  const [activeDb, setActiveDb] = useState<string>("")
-  const [activeColl, setActiveColl] = useState<string>("")
-  const [activeDoc, setActiveDoc] = useState<string>("")
-  const [docSearch, setDocSearch] = useState<string>("")
-
-  const { data: serverInfo, mutate: reloadServer } = useSWR<{ version: string }>(
-    activeConn || connStr ? ["/mongodb/api/serverInfo", { connStr: activeConn || connStr }] : null,
-    ([url, body]) => fetcher(url, body),
-  )
-
-  const { data: dbs, mutate: reloadDbs } = useSWR<{ databases: DbItem[] }>(
-    activeConn || connStr ? ["/mongodb/api/databases", { connStr: activeConn || connStr }] : null,
-    ([url, body]) => fetcher(url, body),
-  )
-
-  const collections = useSWR<{ collections: CollItem[] }>(
-    (activeConn || connStr) && activeDb
-      ? ["/mongodb/api/collections", { connStr: activeConn || connStr, db: activeDb }]
-      : null,
-    ([url, body]) => fetcher(url, body),
-  )
-
-  const docs = useSWR<{ docs?: DocId[]; data?: DocId[] }>(
-    (activeConn || connStr) && activeDb && activeColl && expandedColl[`${activeDb}.${activeColl}`]
-      ? [
-          "/mongodb/api/find",
-          {
-            connStr: activeConn || connStr,
-            db: activeDb,
-            coll: activeColl,
-            filter: {},
-            projection: { _id: 1 },
-            limit: 100,
-            skip: 0,
-          },
-        ]
-      : null,
-    ([url, body]) => fetcher(url, body),
-  )
-
-  const docIds = useMemo(() => {
-    const list = (docs?.data?.docs || docs?.data?.data || []) as any[]
-    return (Array.isArray(list) ? list : [])
-      .map((d: any) => {
-        const id = d?._id
-        if (!id) return null
-        if (typeof id === "string") return id
-        if (typeof id === "object") {
-          if (id.$oid) return id.$oid
-          if (id.oid) return id.oid
-          if (id.toString) return String(id)
-        }
-        return null
-      })
-      .filter(Boolean) as string[]
-  }, [docs?.data])
-
-  const host = parseHost(activeConn || connStr)
-  const version = serverInfo?.version || "-"
-
-  return (
-    <aside className={cn("w-full md:w-72 shrink-0 border-r bg-background", className)} aria-label="Collections Sidebar">
-      <div className="flex flex-col">
-        <div className="border-b px-3 py-2">
-          <div className="text-xs text-muted-foreground">Connected to</div>
-          <div className="text-sm font-medium">{host || "(not set)"}</div>
-          <div className="text-xs text-muted-foreground">MongoDB {version ? String(version) : "unknown"}</div>
-          <div className="mt-2 flex items-center gap-2">
-            <div className="relative flex-1">
-              <input
-                value={docSearch}
-                onChange={(e) => setDocSearch(e.target.value)}
-                placeholder="Search databases/collections"
-                className="w-full rounded-md border bg-background pl-7 pr-2 py-1.5 text-xs"
-              />
-              <Search className="h-3.5 w-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                reloadServer()
-                reloadDbs()
-              }}
-              disabled={!activeConn && !connStr}
-              title="Refresh server and databases"
-            >
-              <RefreshCw className="h-3.5 w-3.5" />
-              Refresh
-            </Button>
-          </div>
-        </div>
-
-        <div className="p-1">
-          <ul className="space-y-0.5">
-            {(dbs?.databases || []).map((db) => {
-              const isOpen = !!expandedDb[db.name]
-              return (
-                <div key={db.name}>
-                  <div
-                    className="flex items-center gap-2 px-2 py-1.5 hover:bg-muted/50 rounded cursor-pointer"
-                    onClick={() => {
-                      setActiveDb(db.name)
-                      setExpandedDb((prev) => ({ ...prev, [db.name]: !prev[db.name] }))
-                    }}
-                  >
-                    {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                    <Database className="h-4 w-4" />
-                    <span className="text-sm">{db.name}</span>
-                    <Button variant="ghost" size="sm" onClick={() => reloadDbs()} title="Refresh databases">
-                      <RefreshCw className="h-4 w-4" />
-                      <span className="sr-only">Refresh databases</span>
-                    </Button>
-                  </div>
-
-                  <AnimatePresence initial={false}>
-                    {isOpen && (
-                      <motion.div
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: "auto", opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        className="overflow-hidden"
-                      >
-                        <div className="ml-6 mt-1 space-y-1">
-                          <div className="flex items-center justify-between pr-2">
-                            <span className="text-xs text-muted-foreground">Collections</span>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => collections.mutate()}
-                              title="Refresh collections"
-                            >
-                              <RefreshCw className="h-4 w-4" />
-                              <span className="sr-only">Refresh collections</span>
-                            </Button>
-                          </div>
-                          {(collections.data?.collections || []).map((c) => {
-                            const key = `${db.name}.${c.name}`
-                            const collOpen = !!expandedColl[key]
-                            const selected = activeDb === db.name && activeColl === c.name
-                            return (
-                              <div key={key}>
-                                <div
-                                  className="flex items-center gap-2 px-2 py-1.5 hover:bg-muted/50 rounded cursor-pointer"
-                                  onClick={() => {
-                                    setActiveColl(c.name)
-                                    setExpandedColl((prev) => ({ ...prev, [key]: !prev[key] }))
-                                  }}
-                                >
-                                  {collOpen ? (
-                                    <ChevronDown className="h-4 w-4" />
-                                  ) : (
-                                    <ChevronRight className="h-4 w-4" />
-                                  )}
-                                  <Folder className="h-4 w-4" />
-                                  <span className="text-sm">{c.name}</span>
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => docs.mutate()}
-                                    title="Refresh documents"
-                                  >
-                                    <RefreshCw className="h-4 w-4" />
-                                    <span className="sr-only">Refresh documents</span>
-                                  </Button>
-                                </div>
-
-                                <AnimatePresence initial={false}>
-                                  {collOpen && selected && (
-                                    <motion.div
-                                      initial={{ height: 0, opacity: 0 }}
-                                      animate={{ height: "auto", opacity: 1 }}
-                                      exit={{ height: 0, opacity: 0 }}
-                                      className="overflow-hidden"
-                                    >
-                                      <div className="ml-6 mt-1 pr-2 flex items-center gap-2">
-                                        <div className="relative flex-1">
-                                          <input
-                                            value={docSearch}
-                                            onChange={(e) => setDocSearch(e.target.value)}
-                                            placeholder="Search docs (IDs)"
-                                            className="w-full rounded border bg-background pl-7 pr-2 py-1 text-xs"
-                                          />
-                                          <Search className="h-3.5 w-3.5 absolute left-1.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                                        </div>
-                                        <Button
-                                          variant="ghost"
-                                          size="sm"
-                                          onClick={() => docs.mutate()}
-                                          title="Refresh documents"
-                                        >
-                                          <RefreshCw className="h-4 w-4" />
-                                          <span className="sr-only">Refresh documents</span>
-                                        </Button>
-                                      </div>
-
-                                      <div className="ml-6 mt-1 space-y-1">
-                                        {docIds.filter((id) => id.toLowerCase().includes(docSearch.toLowerCase()))
-                                          .length === 0 ? (
-                                          <div className="text-xs text-muted-foreground px-2 py-1">
-                                            No docs (first 100){docSearch ? " match your search" : ""}
-                                          </div>
-                                        ) : (
-                                          docIds
-                                            .filter((id) => id.toLowerCase().includes(docSearch.toLowerCase()))
-                                            .map((id) => (
-                                              <button
-                                                key={id}
-                                                className={cn(
-                                                  "w-full flex items-center gap-2 px-2 py-1 rounded hover:bg-muted text-left",
-                                                  activeDoc === id && "bg-muted",
-                                                )}
-                                                onClick={() => {
-                                                  setActiveDoc(id)
-                                                  onSelectDocument?.(db.name, c.name, id)
-                                                  window.dispatchEvent(
-                                                    new CustomEvent("mongo:select-doc", {
-                                                      detail: { db: db.name, collection: c.name, id },
-                                                    }),
-                                                  )
-                                                }}
-                                                title={id}
-                                              >
-                                                <FileText className="h-3.5 w-3.5" />
-                                                <span className="text-xs truncate">{id}</span>
-                                              </button>
-                                            ))
-                                        )}
-                                      </div>
-                                    </motion.div>
-                                  )}
-                                </AnimatePresence>
-                              </div>
-                            )
-                          })}
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              )
-            })}
-          </ul>
-        </div>
-      </div>
-    </aside>
-  )
-}
-
-function parseHost(str: string) {
+const parseHost = (str: string) => {
   if (!str) return ""
   try {
-    // crude parse: hide credentials if present; show host(s)
-    // mongodb+srv://user:pass@host/db -> host/db
-    const at = str.indexOf("@")
-    const start = str.indexOf("://")
-    if (start !== -1) {
-      if (at !== -1) {
-        return str.slice(at + 1)
-      }
-      return str.slice(start + 3)
+    const atIndex = str.indexOf("@")
+    const protocolIndex = str.indexOf("://")
+    if (protocolIndex !== -1) {
+      return str.substring(atIndex !== -1 ? atIndex + 1 : protocolIndex + 3)
     }
     return str
   } catch {
@@ -318,4 +58,247 @@ function parseHost(str: string) {
   }
 }
 
-export default SidebarTree
+const normalizeDocId = (id: MongoID): string => {
+  if (typeof id === "string") return id
+  if (id && typeof id === "object") {
+    if ('$oid' in id && typeof id.$oid === 'string') return id.$oid
+    return JSON.stringify(id) // Fallback for complex ObjectIDs
+  }
+  return String(id)
+}
+
+// --- Main Component ---
+
+// --- Main Component ---
+export function SidebarTree({
+  connStr,
+  activeDb,
+  activeColl,
+  isCollapsed,
+  onSelectDatabase,
+  onSelectCollection,
+  onSelectDocument,
+  onToggleCollapse,
+}: SidebarTreeProps) {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  const [filterText, setFilterText] = useState("")
+
+  useEffect(() => {
+    if (activeDb) {
+      setExpanded(prev => ({ ...prev, [activeDb]: true }))
+    }
+  }, [activeDb])
+
+  const { data: serverInfo, mutate: reloadServer } = useSWR(
+    connStr ? ["/mongodb/api/serverInfo", { connStr }] : null,
+    ([url, body]) => fetcher(url, body)
+  )
+
+  const { data: dbsResponse, error: dbsError, isLoading: dbsLoading, mutate: reloadDbs } = useSWR<ApiResponse_Dbs>(
+    connStr ? ["/mongodb/api/databases", { connStr }] : null,
+    ([url, body]) => fetcher(url, body)
+  )
+
+  const handleRefresh = useCallback(() => {
+    reloadServer()
+    reloadDbs()
+  }, [reloadServer, reloadDbs])
+
+  const databases = useMemo((): DbItem[] => {
+    if (!dbsResponse?.databases) return []
+    // Handle both ["db1"] and [{name: "db1"}] formats
+    return dbsResponse.databases.map(db => (typeof db === 'string' ? { name: db } : db))
+  }, [dbsResponse])
+
+  const filteredDbs = useMemo(() => {
+    if (!filterText.trim()) return databases
+    const lowercasedFilter = filterText.toLowerCase()
+    return databases.filter(db => db.name.toLowerCase().includes(lowercasedFilter))
+  }, [databases, filterText])
+
+  const host = parseHost(connStr)
+  const version = serverInfo?.version || "N/A"
+
+  if (isCollapsed) {
+    return (
+      <aside className="w-14 shrink-0 border-r bg-background" aria-label="Collections Sidebar (Collapsed)">
+        <TooltipProvider delayDuration={0}>
+          <div className="flex flex-col items-center p-2 space-y-2">
+            <Button variant="ghost" size="icon" onClick={onToggleCollapse} title="Expand Sidebar">
+              <PanelLeftOpen className="h-4 w-4" />
+            </Button>
+            <Button variant="ghost" size="icon" onClick={handleRefresh} disabled={!connStr} title="Refresh">
+              <RefreshCw className="h-4 w-4" />
+            </Button>
+            <hr className="w-full border-border" />
+            {databases.map(db => (
+              <Tooltip key={db.name}>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant={activeDb === db.name ? "secondary" : "ghost"}
+                    size="icon"
+                    onClick={() => onSelectDatabase(db.name)}
+                  >
+                    <Database className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="right">{db.name}</TooltipContent>
+              </Tooltip>
+            ))}
+          </div>
+        </TooltipProvider>
+      </aside>
+    )
+  }
+
+  return (
+    <aside className="w-full md:w-72 shrink-0 border-r bg-background flex flex-col" aria-label="Collections Sidebar">
+      <div className="border-b p-2">
+        <div className="flex items-start justify-between">
+          <div className="min-w-0">
+            <div className="text-xs text-muted-foreground">Connected to</div>
+            <div className="text-sm font-medium truncate" title={host}>{host || "(not connected)"}</div>
+            <div className="text-xs text-muted-foreground">MongoDB v{version}</div>
+          </div>
+          <Button variant="ghost" size="icon" onClick={onToggleCollapse} title="Collapse Sidebar" className="shrink-0">
+            <PanelLeftClose className="h-4 w-4" />
+          </Button>
+        </div>
+        <div className="mt-2 flex items-center gap-2">
+          <div className="relative flex-1">
+            <input
+              value={filterText}
+              onChange={(e) => setFilterText(e.target.value)}
+              placeholder="Search databases..."
+              className="w-full rounded-md border bg-background pl-7 pr-2 py-1 text-sm"
+            />
+            <Search className="h-4 w-4 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          </div>
+          <Button variant="ghost" size="icon" onClick={handleRefresh} disabled={!connStr} title="Refresh">
+            <RefreshCw className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+
+      <div className="p-1 overflow-y-auto flex-1">
+        {dbsLoading && <div className="text-xs text-muted-foreground px-2">Loading databases...</div>}
+        {dbsError && <ErrorMessage message={dbsError.message} />}
+        {filteredDbs.length > 0 && (
+          <ul className="space-y-0.5">
+            {filteredDbs.map(db => (
+              <DatabaseNode
+                key={db.name}
+                db={db}
+                connStr={connStr}
+                isOpen={!!expanded[db.name]}
+                isActive={activeDb === db.name}
+                activeColl={activeColl}
+                onToggle={() => setExpanded(prev => ({ ...prev, [db.name]: !prev[db.name] }))}
+                onSelectDatabase={onSelectDatabase}
+                onSelectCollection={onSelectCollection}
+                onSelectDocument={onSelectDocument}
+              />
+            ))}
+          </ul>
+        )}
+      </div>
+    </aside>
+  )
+}
+
+
+// --- Sub-Components for Tree Nodes ---
+
+function DatabaseNode({ db, connStr, isOpen, isActive, activeColl, onToggle, onSelectDatabase, onSelectCollection, onSelectDocument }) {
+  const { data: collsResponse, error, isLoading } = useSWR<ApiResponse_Colls>(
+    connStr && db.name && isOpen ? ["/mongodb/api/collections", { connStr, db: db.name }] : null,
+    ([url, body]) => fetcher(url, body), { revalidateOnFocus: false }
+  )
+
+  const collections = useMemo((): CollItem[] => {
+    if (!collsResponse?.collections) return []
+    // This is the FIX: Handle both ["coll1"] and [{name: "coll1"}] formats
+    return collsResponse.collections.map(coll => 
+      typeof coll === 'string' ? { name: coll } : coll
+    )
+  }, [collsResponse])
+
+  const handleClick = () => {
+    onSelectDatabase(db.name)
+    onToggle()
+  }
+
+  return (
+    <li>
+      <div
+        className={cn("flex items-center gap-1.5 px-2 py-1.5 hover:bg-muted/50 rounded cursor-pointer", isActive && "bg-muted")}
+        onClick={handleClick}
+      >
+        {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        <Database className="h-4 w-4 text-amber-600" />
+        <span className="text-sm font-medium flex-1 truncate">{db.name}</span>
+      </div>
+
+      <AnimatePresence initial={false}>
+        {isOpen && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden"
+          >
+            <ul className="ml-6 mt-1 space-y-1 pl-1 border-l border-dashed">
+              {isLoading && <li className="text-xs text-muted-foreground px-2">Loading...</li>}
+              {error && <ErrorMessage message={error.message} isNested />}
+              {collections.map(c => (
+                <CollectionNode
+                  key={c.name}
+                  dbName={db.name}
+                  coll={c}
+                  isActive={isActive && activeColl === c.name}
+                  onSelectCollection={onSelectCollection}
+                  onSelectDocument={onSelectDocument}
+                />
+              ))}
+              {!isLoading && collections.length === 0 && <li className="text-xs text-muted-foreground px-2 py-1">No collections</li>}
+            </ul>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </li>
+  )
+}
+
+function CollectionNode({ dbName, coll, isActive, onSelectCollection, onSelectDocument }) {
+  // IMPORTANT: This node no longer fetches documents. It only triggers the action.
+  // The main page is responsible for fetching and displaying documents.
+  // We can add back a small document list later if needed for quick navigation.
+  
+  const handleClick = () => {
+    // This is the CORE CHANGE:
+    // When a collection is clicked, it immediately calls the onSelectCollection prop.
+    // This tells the parent page (MongoManagerPage) to fetch the documents
+    // for this collection and display them in the main DataGrid.
+    onSelectCollection(dbName, coll.name)
+  }
+
+  return (
+    <li>
+      <div
+        className={cn(
+          "flex items-center gap-1.5 px-2 py-1.5 hover:bg-muted/50 rounded cursor-pointer",
+          isActive && "bg-primary/10 text-primary font-semibold"
+        )}
+        onClick={handleClick}
+      >
+        {/* We can remove the chevron as we are not expanding this node anymore */}
+        <Folder className="h-4 w-4 text-sky-600 shrink-0" />
+        <span className="text-sm flex-1 truncate">{coll.name}</span>
+      </div>
+    </li>
+  )
+}
+
+function ErrorMessage({ message, isNested = false }: { message: string; isNested?: boolean }) {
+    // ... (Error message component remains the same) ...
+}

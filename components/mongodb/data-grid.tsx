@@ -1,79 +1,114 @@
+// components/mongodb/data-grid.tsx
 "use client"
 
-import { AnimatePresence, motion } from "framer-motion"
-import { useEffect, useRef } from "react"
-import { Card } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
+import { useState } from "react"
+import { DataGridToolbar } from "./data-grid-toolbar"
+import { JsonView } from "./views/json-view"
+import { TableView } from "./views/table-view"
+import { ListView } from "./views/list-view"
+
+// --- Type Definitions ---
+export type ViewMode = "json" | "table" | "list"
+export type MongoDoc = { _id: any; [key: string]: any }
 
 export interface DataGridProps {
-  docs: any[]
+  docs: MongoDoc[]
   collection: string
-  highlightId?: string | null
-  onHighlightConsumed?: () => void
+  isLoading: boolean
+  // CRUD Handlers
+  onUpdateDoc: (id: any, update: object) => Promise<void>
+  onDeleteDoc: (id: any) => Promise<void>
+  onDuplicateDoc: (doc: MongoDoc) => Promise<void>
+  onBulkDelete: (ids: any[]) => Promise<void>
+  // Pagination
+  page: number
+  limit: number
+  totalDocs: number
+  onPageChange: (page: number) => void
 }
 
-export function DataGrid({ docs, collection, highlightId, onHighlightConsumed }: DataGridProps) {
-  const containerRef = useRef<HTMLDivElement | null>(null)
+export function DataGrid({
+  docs,
+  collection,
+  isLoading,
+  onUpdateDoc,
+  onDeleteDoc,
+  onDuplicateDoc,
+  onBulkDelete,
+  page,
+  limit,
+  totalDocs,
+  onPageChange,
+}: DataGridProps) {
+  const [view, setView] = useState<ViewMode>("json")
+  const [selectedIds, setSelectedIds] = useState<Set<any>>(new Set())
 
-  useEffect(() => {
-    if (!highlightId) return
-    const el = document.getElementById(rowId(collection, String(highlightId)))
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "center" })
-      const t = setTimeout(() => onHighlightConsumed?.(), 2000)
-      return () => clearTimeout(t)
+  const handleToggleSelection = (id: any) => {
+    const newSelection = new Set(selectedIds)
+    if (newSelection.has(id)) {
+      newSelection.delete(id)
     } else {
-      onHighlightConsumed?.()
+      newSelection.add(id)
     }
-  }, [highlightId, collection, onHighlightConsumed])
+    setSelectedIds(newSelection)
+  }
+  
+  const handleToggleAll = () => {
+    if(selectedIds.size === docs.length) {
+        setSelectedIds(new Set())
+    } else {
+        setSelectedIds(new Set(docs.map(d => d._id)))
+    }
+  }
+
+  const renderContent = () => {
+    if (isLoading) {
+      return <div className="text-center p-8 text-muted-foreground">Loading documents...</div>
+    }
+    if (!docs || docs.length === 0) {
+      return <div className="text-center p-8 text-muted-foreground">No documents found in this collection.</div>
+    }
+
+    switch (view) {
+      case "table":
+        return <TableView docs={docs} selectedIds={selectedIds} onToggleSelection={handleToggleSelection} onUpdateDoc={onUpdateDoc} />
+      case "list":
+        return <ListView docs={docs} selectedIds={selectedIds} onToggleSelection={handleToggleSelection} />
+      case "json":
+      default:
+        return (
+          <div className="space-y-3 p-1">
+            {docs.map((doc) => (
+              <JsonView
+                key={String(doc._id)}
+                doc={doc}
+                isSelected={selectedIds.has(doc._id)}
+                onToggleSelection={() => handleToggleSelection(doc._id)}
+                onUpdate={onUpdateDoc}
+                onDelete={onDeleteDoc}
+                onDuplicate={onDuplicateDoc}
+              />
+            ))}
+          </div>
+        )
+    }
+  }
 
   return (
-    <div ref={containerRef} className="space-y-2">
-      <AnimatePresence initial={false}>
-        {docs.map((doc) => {
-          const id = String(doc?._id ?? "")
-          const isHighlighted = highlightId && id === highlightId
-          return (
-            <motion.div
-              key={id || Math.random()}
-              id={rowId(collection, id)}
-              layout
-              initial={{ opacity: 0, y: 8 }}
-              animate={{
-                opacity: 1,
-                y: 0,
-                backgroundColor: isHighlighted ? "rgba(250, 204, 21, 0.35)" : "transparent", // amber-400/35
-              }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ type: "spring", stiffness: 300, damping: 28 }}
-              className="rounded border bg-card"
-            >
-              <Card className="p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="text-xs font-mono text-muted-foreground">_id: {id || "(no id)"}</div>
-                  <div className="flex gap-2">
-                    <Button size="sm" variant="outline" onClick={() => navigator.clipboard.writeText(id)}>
-                      Copy _id
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => navigator.clipboard.writeText(JSON.stringify(doc, null, 2))}
-                    >
-                      Copy JSON
-                    </Button>
-                  </div>
-                </div>
-                <pre className="text-xs mt-2 overflow-auto">{JSON.stringify(doc, null, 2)}</pre>
-              </Card>
-            </motion.div>
-          )
-        })}
-      </AnimatePresence>
+    <div className="flex flex-col h-full w-full bg-background">
+      <DataGridToolbar
+        view={view}
+        onViewChange={setView}
+        selectedCount={selectedIds.size}
+        onBulkDelete={() => onBulkDelete(Array.from(selectedIds))}
+        page={page}
+        limit={limit}
+        totalDocs={totalDocs}
+        onPageChange={onPageChange}
+        isAllSelected={docs.length > 0 && selectedIds.size === docs.length}
+        onToggleAll={handleToggleAll}
+      />
+      <div className="flex-1 overflow-y-auto">{renderContent()}</div>
     </div>
   )
-}
-
-export function rowId(collection: string, id: string) {
-  return `row-${collection}-${id}`
 }

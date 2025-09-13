@@ -52,22 +52,35 @@ export default function MongoManagerPage() {
   const [filter, setFilter] = useState("{ }")
   const [projection, setProjection] = useState("{ }")
   const [sort, setSort] = useState("{ }")
-  const [limit, setLimit] = useState(100)
-  const [skip, setSkip] = useState(0)
+  const [skip, setSkip] = useState(0);
+  const [limit, setLimit] = useState(20); // A reasonable default page size
+
   const [highlightId, setHighlightId] = useState<string | null>(null)
   const [quickSearch, setQuickSearch] = useState("")
   const [docTabs, setDocTabs] = useState<DocTab[]>([])
   const [activeDocId, setActiveDocId] = useState<string | undefined>(undefined)
+  // In MongoManagerPage component
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [leftW, setLeftW] = useState(isSidebarCollapsed ? 56 : 280); // 56px collapsed, 280px expanded
 
-  const [leftW, setLeftW] = useState(280)
   const [rightW, setRightW] = useState(360)
   const dragRef = useRef<{ side: "left" | "right" | null }>({ side: null })
   const isMobile = useMobile()
 
   useEffect(() => {
     function onMove(e: MouseEvent) {
-      if (!dragRef.current.side) return
-      if (dragRef.current.side === "left") setLeftW(Math.max(220, Math.min(480, e.clientX)))
+      if (!dragRef.current.side) return;
+      if (dragRef.current.side === "left") {
+        const newWidth = e.clientX;
+        if (newWidth < 150) { // Threshold to auto-collapse
+          setIsSidebarCollapsed(true);
+          setLeftW(56);
+        } else {
+          setIsSidebarCollapsed(false);
+          setLeftW(Math.max(220, Math.min(480, newWidth)));
+        }
+      }
+
       if (dragRef.current.side === "right") setRightW(Math.max(280, Math.min(640, window.innerWidth - e.clientX)))
     }
     function onUp() {
@@ -99,6 +112,13 @@ export default function MongoManagerPage() {
     mutate: reloadDbs,
     error: dbsError,
   } = useSWR(connStr ? ["/mongodb/api/databases", { connStr }] : null, ([url, body]) => fetcher(url, body))
+
+  const { data: countResult, mutate: reloadCount } = useSWR(
+    connStr && selectedDb && selectedColl ? ["/mongodb/api/count", { connStr, db: selectedDb, coll: selectedColl, filter: {} }] : null,
+    ([url, body]) => fetcher(url, body)
+  )
+
+
 
   const {
     data: colls,
@@ -155,10 +175,12 @@ export default function MongoManagerPage() {
     mutate: reloadFind,
     error: findError,
   } = useSWR(
+    // It only runs when a connection, db, AND collection are selected
     connStr && selectedDb && selectedColl
-      ? ["/mongodb/api/find", { connStr, db: selectedDb, coll: selectedColl }]
+      ? ["/mongodb/api/find", { connStr, db: selectedDb, coll: selectedColl, filter: {}, limit, skip }]
       : null,
     ([url, body]) => fetcher(url, body),
+    { revalidateOnFocus: false } // Prevent re-fetching on window focus
   )
 
   async function runInsertMany(docs: any[]) {
@@ -199,6 +221,68 @@ export default function MongoManagerPage() {
     })
     await reloadFind()
   }
+
+
+  // --- NEW CRUD HANDLERS ---
+
+  async function handleUpdateDoc(id: any, update: object) {
+    await fetcher("/mongodb/api/updateOne", { connStr, db: selectedDb, collection: selectedColl, filter: { _id: id }, update });
+    reloadFind();
+  }
+
+  async function handleDeleteDoc(id: any) {
+    await fetcher("/mongodb/api/deleteOne", { connStr, db: selectedDb, collection: selectedColl, filter: { _id: id } });
+    reloadFind();
+    reloadCount();
+  }
+
+  async function handleDuplicateDoc(doc: object) {
+    const { _id, ...insertDoc } = doc;
+    await fetcher("/mongodb/api/insertOne", { connStr, db: selectedDb, collection: selectedColl, doc: insertDoc });
+    reloadFind();
+    reloadCount();
+  }
+
+  async function handleBulkDelete(ids: any[]) {
+    await fetcher("/mongodb/api/deleteMany", { connStr, db: selectedDb, collection: selectedColl, filter: { _id: { $in: ids } } });
+    reloadFind();
+    reloadCount();
+  }
+
+  const handlePageChange = (newPage: number) => {
+    setSkip((newPage - 1) * limit);
+  }
+
+  function handleConnectionChange(newConnStr: string) {
+    if (newConnStr !== connStr) {
+      setConnStr(newConnStr)
+      setSelectedDb("")
+      setSelectedColl("")
+      setSkip(0)
+      reloadDbs()
+    }
+  }
+
+  const handleSelectCollection = (db: string, coll: string) => {
+    // This function is passed to SidebarTree and is the key to the new behavior
+    if (selectedDb !== db || selectedColl !== coll) {
+      setSelectedDb(db)
+      setSelectedColl(coll)
+      setSkip(0) // Reset to the first page of results
+      // `reloadFind` is not strictly needed here because the useSWR hook
+      // will automatically re-fetch when its dependencies (selectedDb, selectedColl) change.
+    }
+  }
+
+  const handleSelectDocument = (db: string, coll: string, id: string) => {
+    // This function opens a document in a new tab
+    if (!docTabs.some(t => t.id === id)) {
+      setDocTabs(prev => [...prev, { id, db, collection: coll }])
+    }
+    setActiveDocId(id)
+    setHighlightId(id) // Highlight the document in the main DataGrid
+  }
+
 
   async function runAggregate(pipelineText: string) {
     const pipeline = JSON.parse(pipelineText || "[]")
@@ -383,10 +467,10 @@ export default function MongoManagerPage() {
   }, [findResult?.docs, quickSearch])
 
   return (
-    <main className="min-h-screen bg-background">
+    <main className="min-h-screen bg-background flex flex-col  overflow-hidden">
       <ShortcutSettingsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
 
-      <header className="bg-primary text-primary-foreground py-4">
+      <header className="bg-primary text-primary-foreground py-4 shrink-0">
         <div className="mx-auto max-w-6xl px-4 flex items-center justify-between gap-3">
           <div>
             <h1 className="text-xl font-semibold text-pretty">MongoDB Manager</h1>
@@ -419,7 +503,6 @@ export default function MongoManagerPage() {
               ["Results", "results"],
               ["Details", "details"],
               ["Bulk", "bulkOps"],
-              ["Console", "console"],
               ["AI", "ai"],
             ].map(([label, key]) => (
               <label
@@ -450,56 +533,11 @@ export default function MongoManagerPage() {
             >
               Reset Layout
             </button>
-
-            <span className="font-medium ml-4 mr-1">Jump:</span>
-            <button
-              className="rounded border px-2 py-1 hover:bg-primary-foreground/10"
-              onClick={() => connsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
-            >
-              Connections
-            </button>
-            <button
-              className="rounded border px-2 py-1 hover:bg-primary-foreground/10"
-              onClick={() => queryRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
-            >
-              Query
-            </button>
-            <button
-              className="rounded border px-2 py-1 hover:bg-primary-foreground/10"
-              onClick={() => resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
-            >
-              Results
-            </button>
-            <button
-              className="rounded border px-2 py-1 hover:bg-primary-foreground/10"
-              onClick={() => detailsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
-            >
-              Details
-            </button>
-            <button
-              className="rounded border px-2 py-1 hover:bg-primary-foreground/10"
-              onClick={() => bulkRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
-            >
-              Bulk
-            </button>
-            <button
-              className="rounded border px-2 py-1 hover:bg-primary-foreground/10"
-              onClick={() => setView((v) => ({ ...v, console: true }))}
-              title="Open Console"
-            >
-              Console
-            </button>
-            <button
-              className="rounded border px-2 py-1 hover:bg-primary-foreground/10"
-              onClick={() => aiRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
-            >
-              AI
-            </button>
           </div>
         </div>
       </header>
 
-      <section className="mx-auto max-w-6xl px-4 py-4">
+      <section className="mx-auto max-w-6xl px-4 py-4 hidden">
         <div className="rounded-md border bg-card text-card-foreground p-3">
           <p className="text-sm font-medium">Security & Privacy</p>
           <ul className="mt-1 text-xs text-muted-foreground list-disc pl-5 space-y-1">
@@ -532,58 +570,34 @@ export default function MongoManagerPage() {
               <div className="p-3 space-y-3">
                 <ConnectionsManager
                   current={connStr}
-                  onSelect={(str) => {
-                    setConnStr(str)
-                    setSelectedDb("")
-                    setSelectedColl("")
-                    setSkip(0)
-                    reloadDbs()
-                  }}
+                  onConnStrChange={handleConnectionChange}
+                  remember={remember}
+                  onRememberChange={setRemember}
                 />
-                <div className="space-y-2 px-1">
-                  <label className="text-xs font-medium">Connection string</label>
-                  <input
-                    type="password"
-                    value={connStr}
-                    onChange={(e) => setConnStr(e.target.value)}
-                    placeholder="mongodb+srv://user:pass@host/"
-                    className="w-full rounded-md border bg-background px-2 py-1.5 text-sm"
-                  />
-                  <div className="flex items-center gap-2">
-                    <input
-                      id="remember"
-                      type="checkbox"
-                      checked={remember}
-                      onChange={(e) => setRemember(e.target.checked)}
-                    />
-                    <label htmlFor="remember" className="text-xs text-muted-foreground">
-                      Remember in this browser
-                    </label>
-                    <button
-                      className="ml-auto inline-flex items-center gap-1 text-xs rounded border px-2 py-1 hover:bg-muted"
-                      onClick={() => reloadDbs()}
-                      disabled={!connStr || loadingDbs}
-                      title="Refresh connection"
-                    >
-                      <RefreshCw className="h-3.5 w-3.5" />
-                      Refresh
-                    </button>
-                  </div>
+                <div className="flex items-center justify-end">
+                  <button
+                    className="inline-flex items-center gap-1 text-xs rounded border px-2 py-1 hover:bg-muted"
+                    onClick={() => reloadDbs()}
+                    disabled={!connStr || loadingDbs}
+                    title="Refresh databases and collections list"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    Refresh Tree
+                  </button>
                 </div>
               </div>
               <SidebarTree
                 connStr={connStr}
-                onSelectDatabase={(db) => {
-                  setSelectedDb(db)
-                  setSelectedColl("")
-                  setSkip(0)
-                  reloadColls()
-                }}
-                onSelectCollection={(db, coll) => {
-                  setSelectedDb(db)
-                  setSelectedColl(coll)
-                  setSkip(0)
-                  reloadFind()
+                activeDb={selectedDb}
+                activeColl={selectedColl}
+                isCollapsed={isSidebarCollapsed}
+                onSelectDatabase={setSelectedDb} // Simple selection
+                onSelectCollection={handleSelectCollection} // The new, important handler
+
+                onToggleCollapse={() => {
+                  const newCollapsedState = !isSidebarCollapsed;
+                  setIsSidebarCollapsed(newCollapsedState);
+                  setLeftW(newCollapsedState ? 56 : 280);
                 }}
                 onSelectDocument={(db, coll, id) => {
                   setSelectedDb(db)
@@ -612,7 +626,7 @@ export default function MongoManagerPage() {
             />
           )}
 
-          <section className={isMobile ? "min-w-0 flex flex-col" : "flex-1 min-w-0 flex flex-col"}>
+          <section className={isMobile ? "min-w-0 flex flex-col" : "flex-1 min-w-0 flex flex-col "}>
             <DocumentTabs
               tabs={docTabs}
               activeId={activeDocId}
@@ -624,6 +638,7 @@ export default function MongoManagerPage() {
               className="sticky top-0 z-10"
             />
             <div ref={queryRef} className="border-b p-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+
               {view.queryBuilder && (
                 <div>
                   <label className="text-xs font-medium">Filter (JSON)</label>
@@ -730,10 +745,15 @@ export default function MongoManagerPage() {
                 </div>
               )}
 
+
               {view.results && (
-                <div ref={resultsRef} className="flex-1 min-h-0 overflow-auto p-3">
-                  <div className="mb-2 flex items-center gap-2">
-                    <div className="relative flex-1 max-w-sm">
+                // THE FIX IS HERE: Added `min-w-0` to this div.
+                // This tells the parent grid that this column is allowed to shrink
+                // below its intrinsic content size, preventing overflow.
+                <div ref={resultsRef} className="flex flex-1 flex-col min-h-0 w-full p-3 relative min-w-0">
+                  {/* Toolbar - This part is fine */}
+                  <div className="mb-2 flex items-center gap-2 shrink-0">
+                    <div className="relative flex-1">
                       <input
                         value={quickSearch}
                         onChange={(e) => setQuickSearch(e.target.value)}
@@ -752,16 +772,30 @@ export default function MongoManagerPage() {
                       Refresh
                     </button>
                   </div>
+
+                  {/* Error Message - This part is fine */}
                   {findError && (
-                    <p className="text-xs text-red-500 break-all mb-2">{String(findError.message || findError)}</p>
+                    <p className="text-xs text-red-500 break-all mb-2 shrink-0">{String(findError.message || findError)}</p>
                   )}
-                  {loadingFind && <p className="text-xs text-muted-foreground mb-2">Loading results…</p>}
-                  <DataGrid
-                    docs={filteredDocs}
-                    collection={selectedColl}
-                    highlightId={highlightId}
-                    onHighlightConsumed={() => setHighlightId(null)}
-                  />
+
+                  {/* DataGrid Container - This now correctly fills the remaining space */}
+                  <div className="flex-1 min-h-0">
+                    <DataGrid
+                      // FIX: Pass the client-side filtered docs to the DataGrid
+                      docs={filteredDocs}
+                      collection={selectedColl}
+                      isLoading={loadingFind}
+                      onUpdateDoc={handleUpdateDoc}
+                      onDeleteDoc={handleDeleteDoc}
+                      onDuplicateDoc={handleDuplicateDoc}
+                      onBulkDelete={handleBulkDelete}
+                      page={Math.floor(skip / limit) + 1}
+                      limit={limit}
+                      totalDocs={countResult?.count ?? 0}
+                      onPageChange={handlePageChange}
+                    />
+                  </div>
+
                 </div>
               )}
             </div>
@@ -858,7 +892,7 @@ export default function MongoManagerPage() {
         </div>
       </section>
 
-      <TerminalDock isOpen={view.console} onOpenChange={(open) => setView((v) => ({ ...v, console: open }))}>
+      <TerminalDock>
         <div ref={cmdRef} className="p-3">
           <CommandConsole onRun={runCommand} disabled={!connStr || !selectedDb} />
         </div>
