@@ -157,7 +157,7 @@ export function AIAssistant(props: {
     abortRef.current = controller
 
     try {
-      const res = await fetch("/api/ai/gemini", {
+      const res = await fetch("/mongodb/api/ai/gemini", {
         method: "POST",
         body: JSON.stringify(sanitizedPayload),
         headers: { "Content-Type": "application/json" },
