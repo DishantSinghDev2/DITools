@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo } from "react"
-import { Pin, PinOff, X } from "lucide-react"
+import { Pin, X } from "lucide-react"
 import {
   DndContext,
   closestCenter,
@@ -18,21 +18,19 @@ import {
   horizontalListSortingStrategy,
   useSortable,
 } from "@dnd-kit/sortable"
+import { restrictToHorizontalAxis } from "@dnd-kit/modifiers"
 import { CSS } from "@dnd-kit/utilities"
 import { cn } from "@/lib/utils"
 
-// 1. UPDATED DocTab TYPE
-export type DocTab = {
+export type CollectionTab = {
   id: string
   db: string
   collection: string
-  label?: string
-  isPinned?: boolean // New property for pinning
+  isPinned?: boolean
 }
 
-// 2. NEW PROPS FOR REORDERING AND PINNING
-interface DocumentTabsProps {
-  tabs: DocTab[]
+interface CollectionTabsProps {
+  tabs: CollectionTab[]
   activeId?: string
   onActivate: (id: string) => void
   onClose: (id: string) => void
@@ -41,9 +39,8 @@ interface DocumentTabsProps {
   className?: string
 }
 
-// 3. A NEW SUB-COMPONENT FOR A SINGLE DRAGGABLE TAB
 function SortableTab({ tab, isActive, onActivate, onClose, onPin }: {
-  tab: DocTab
+  tab: CollectionTab
   isActive: boolean
   onActivate: (id: string) => void
   onClose: (id: string) => void
@@ -61,10 +58,8 @@ function SortableTab({ tab, isActive, onActivate, onClose, onPin }: {
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
-    zIndex: isDragging ? 10 : 1, // Ensure dragging tab is on top
+    zIndex: isDragging ? 10 : 1,
   }
-
-  const label = tab.label || `${tab.collection}/${tab.id.slice(0, 6)}...`
 
   return (
     <div
@@ -72,23 +67,21 @@ function SortableTab({ tab, isActive, onActivate, onClose, onPin }: {
       style={style}
       {...attributes}
       className={cn(
-        "flex-shrink-0 relative rounded-t-md border-b-2",
-        isActive ? "bg-background border-primary" : "bg-muted hover:bg-background/60 border-transparent",
+        "flex-shrink-0 relative rounded-t-md border border-b-0",
+        isActive ? "bg-background " : "bg-muted hover:bg-background/60 border-transparent",
         isDragging && "shadow-lg opacity-80"
       )}
     >
-      <div className="flex items-center gap-1.5 whitespace-nowrap px-3 py-1.5 text-xs">
-        {/* The main draggable area and activation button */}
+      <div className="flex items-center gap-1.5 whitespace-nowrap px-3 h-8 text-xs">
         <button
           {...listeners}
           onClick={() => onActivate(tab.id)}
           className="flex-1 text-left font-mono pr-2"
-          title={`${tab.db}.${tab.collection} • ${tab.id}`}
+          title={`${tab.db}.${tab.collection}`}
         >
-          {label}
+          {tab.collection}
         </button>
 
-        {/* Pin Button */}
         <button
           onClick={() => onPin(tab.id)}
           className="p-0.5 rounded-full text-muted-foreground hover:bg-primary/10 hover:text-primary"
@@ -96,11 +89,9 @@ function SortableTab({ tab, isActive, onActivate, onClose, onPin }: {
         >
           {tab.isPinned
             ? <Pin className="h-3.5 w-3.5" fill="currentColor" />
-            : <Pin className="h-3.5 w-3.5" />
-          }
+            : <Pin className="h-3.5 w-3.5" />}
         </button>
 
-        {/* Close Button */}
         <button
           onClick={(e) => {
             e.stopPropagation()
@@ -116,8 +107,7 @@ function SortableTab({ tab, isActive, onActivate, onClose, onPin }: {
   )
 }
 
-// 4. THE MAIN TABS COMPONENT
-export function DocumentTabs({
+export function CollectionTabs({
   tabs,
   activeId,
   onActivate,
@@ -125,9 +115,9 @@ export function DocumentTabs({
   onReorder,
   onPin,
   className,
-}: DocumentTabsProps) {
+}: CollectionTabsProps) {
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }), // Start dragging after 5px move
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   )
 
@@ -138,18 +128,22 @@ export function DocumentTabs({
     }
   }
 
-  // Separate pinned and unpinned tabs for rendering and independent sorting
   const { pinnedTabs, unpinnedTabs } = useMemo(() => {
-    const pinned: DocTab[] = []
-    const unpinned: DocTab[] = []
+    const pinned: CollectionTab[] = []
+    const unpinned: CollectionTab[] = []
     tabs.forEach(tab => (tab.isPinned ? pinned : unpinned).push(tab))
     return { pinnedTabs: pinned, unpinnedTabs: unpinned }
   }, [tabs])
 
   return (
-    <div className={cn("flex items-stretch gap-1 overflow-x-auto border-b bg-muted/40 pl-2 shrink-0", className)}>
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-        {/* Pinned Tabs Section */}
+    <div className={cn("flex items-end gap-1 overflow-x-auto border-t bg-muted/40 px-2 shrink-0", className)}>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragEnd={handleDragEnd}
+        modifiers={[restrictToHorizontalAxis]}
+      >
+        {/* Pinned Tabs */}
         <SortableContext items={pinnedTabs.map(t => t.id)} strategy={horizontalListSortingStrategy}>
           {pinnedTabs.map((tab) => (
             <SortableTab
@@ -163,12 +157,11 @@ export function DocumentTabs({
           ))}
         </SortableContext>
 
-        {/* Separator */}
         {pinnedTabs.length > 0 && unpinnedTabs.length > 0 && (
-            <div className="w-px bg-border self-stretch my-1.5" />
+          <div className="w-px bg-border self-stretch my-1.5" />
         )}
 
-        {/* Unpinned Tabs Section */}
+        {/* Unpinned Tabs */}
         <SortableContext items={unpinnedTabs.map(t => t.id)} strategy={horizontalListSortingStrategy}>
           {unpinnedTabs.map((tab) => (
             <SortableTab
@@ -184,7 +177,7 @@ export function DocumentTabs({
       </DndContext>
 
       {tabs.length === 0 && (
-        <div className="text-xs text-muted-foreground px-2 py-1.5">No open documents</div>
+        <div className="text-xs text-muted-foreground px-4 py-2">Select a collection to open a tab</div>
       )}
     </div>
   )

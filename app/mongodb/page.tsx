@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
-import useSWR from "swr"
+import useSWR, { mutate } from "swr"
 import { AnimatePresence, motion } from "framer-motion"
 import { PurgeBrowserData } from "@/components/purge-browser-data"
 import { AIAssistant } from "./AIAssistant"
@@ -14,39 +14,29 @@ import { BulkOps } from "@/components/mongodb/bulk-ops"
 import { CommandConsole } from "@/components/mongodb/command-console"
 import { useShortcuts } from "@/context/shortcuts"
 import { WithShortcutTooltip } from "@/components/with-shortcut-tooltip"
-import { Keyboard, RefreshCw, Search, ChevronUp, ChevronDown, Pin, PinOff, Filter } from "lucide-react"
+import { Keyboard, RefreshCw, Search, ChevronUp, ChevronDown, Pin, PinOff, Filter, Terminal } from "lucide-react"
 import { SidebarTree } from "@/components/mongodb/sidebar-tree"
-import { DocumentTabs, type DocTab } from "@/components/mongodb/document-tabs"
+import { CollectionTabs, type CollectionTab } from "@/components/mongodb/collection-tabs"
 import { DocumentViewer } from "@/components/mongodb/document-viewer"
 import { TerminalDock } from "@/components/mongodb/terminal-dock"
 import { ShortcutSettingsDialog } from "@/components/settings/shortcut-settings-dialog"
 import { cn } from "@/lib/utils"
-import { arrayMove } from "@dnd-kit/sortable" // Helper from dnd-kit
+import { arrayMove } from "@dnd-kit/sortable"
 
 
-// Import Dialog components from your UI library (e.g., shadcn/ui)
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
   DialogFooter,
-  DialogClose,
+  DialogTrigger,
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Label } from "@/components/ui/label"
+import { Input } from "@/components/ui/input"
 
-
-type FindParams = {
-  connStr: string
-  db: string
-  coll: string
-  filter?: any
-  projection?: any
-  sort?: any
-  limit?: number
-  skip?: number
-}
 
 const fetcher = async (url: string, body: any) => {
   const res = await fetch(url, {
@@ -61,7 +51,6 @@ const fetcher = async (url: string, body: any) => {
   return res.json()
 }
 
-// Helper to safely parse JSON from a string
 const safeParse = (str: string, fallback: any = {}) => {
   try {
     return JSON.parse(str)
@@ -74,7 +63,6 @@ export default function MongoManagerPage() {
   const [connStr, setConnStr] = useState("")
   const [remember, setRemember] = useState(false)
   const [selectedDb, setSelectedDb] = useState("")
-  const [selectedColl, setSelectedColl] = useState("")
   const [filter, setFilter] = useState("{ }")
   const [projection, setProjection] = useState("{ }")
   const [sort, setSort] = useState("{ }")
@@ -83,16 +71,30 @@ export default function MongoManagerPage() {
 
   const [highlightId, setHighlightId] = useState<string | null>(null)
   const [quickSearch, setQuickSearch] = useState("")
-  const [docTabs, setDocTabs] = useState<DocTab[]>([]) // State now uses the new DocTab type
-  const [activeDocId, setActiveDocId] = useState<string | undefined>(undefined)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [leftW, setLeftW] = useState(280)
+
+  const [collectionTabs, setCollectionTabs] = useState<CollectionTab[]>([])
+  const [activeTabId, setActiveTabId] = useState<string | undefined>(undefined)
+
+  const [createCollDialog, setCreateCollDialog] = useState({ open: false, db: "" });
+  const [newCollName, setNewCollName] = useState("");
+  const [dropDbDialog, setDropDbDialog] = useState({ open: false, db: "" });
+  const [confirmDbName, setConfirmDbName] = useState("");
+
+  const activeCollection = useMemo(
+    () => collectionTabs.find(t => t.id === activeTabId),
+    [collectionTabs, activeTabId]
+  );
+    
+  // DERIVED STATE: The single source of truth for the active DB and Collection
+  const activeDb = activeCollection?.db;
+  const activeColl = activeCollection?.collection;
 
   const [rightW, setRightW] = useState(360)
   const dragRef = useRef<{ side: "left" | "right" | null }>({ side: null })
   const isMobile = useMobile()
 
-  // New state for header controls
   const [isHeaderToolsVisible, setIsHeaderToolsVisible] = useState(true)
   const [isHeaderPinned, setIsHeaderPinned] = useState(false)
   const [isQueryBuilderOpen, setIsQueryBuilderOpen] = useState(false);
@@ -146,21 +148,15 @@ export default function MongoManagerPage() {
   }), [filter, projection, sort])
 
 
-  const {
-    data: dbs,
-    isLoading: loadingDbs,
-    mutate: reloadDbs,
-    error: dbsError,
-  } = useSWR(connStr ? ["/mongodb/api/databases", { connStr }] : null, ([url, body]) => fetcher(url, body))
+  const { mutate: reloadDbs } = useSWR(connStr ? ["/mongodb/api/databases", { connStr }] : null, ([url, body]) => fetcher(url, body))
 
   const { data: countResult, mutate: reloadCount } = useSWR(
-    connStr && selectedDb && selectedColl
-      ? ["/mongodb/api/count", { connStr, db: selectedDb, coll: selectedColl, filter: query.filter }]
+    connStr && activeDb && activeColl
+      ? ["/mongodb/api/count", { connStr, db: activeDb, coll: activeColl, filter: query.filter }]
       : null,
     ([url, body]) => fetcher(url, body),
     { revalidateOnFocus: false }
   )
-
 
   const { data: colls } = useSWR(
     connStr && selectedDb ? ["/mongodb/api/collections", { connStr, db: selectedDb }] : null,
@@ -178,15 +174,15 @@ export default function MongoManagerPage() {
   )
 
   const { data: collStats, isLoading: loadingCollStats, error: collStatsError } = useSWR(
-    connStr && selectedDb && selectedColl
-      ? ["/mongodb/api/collStats", { connStr, db: selectedDb, collection: selectedColl }]
+    connStr && activeDb && activeColl
+      ? ["/mongodb/api/collStats", { connStr, db: activeDb, collection: activeColl }]
       : null,
     ([url, body]) => fetcher(url, body),
   )
 
   const { data: idxList, isLoading: loadingIndexes, error: indexesError } = useSWR(
-    connStr && selectedDb && selectedColl
-      ? ["/mongodb/api/indexes/list", { connStr, db: selectedDb, collection: selectedColl }]
+    connStr && activeDb && activeColl
+      ? ["/mongodb/api/indexes/list", { connStr, db: activeDb, collection: activeColl }]
       : null,
     ([url, body]) => fetcher(url, body),
   )
@@ -197,11 +193,11 @@ export default function MongoManagerPage() {
     mutate: reloadFind,
     error: findError,
   } = useSWR(
-    connStr && selectedDb && selectedColl
+    connStr && activeDb && activeColl
       ? ["/mongodb/api/find", {
         connStr,
-        db: selectedDb,
-        coll: selectedColl,
+        db: activeDb,
+        coll: activeColl,
         ...query,
         limit,
         skip
@@ -211,9 +207,9 @@ export default function MongoManagerPage() {
     { revalidateOnFocus: false }
   )
 
-
   async function runInsertMany(docs: any[]) {
-    const res = await fetcher("/mongodb/api/insertMany", { connStr, db: selectedDb, collection: selectedColl, docs })
+      if (!activeDb || !activeColl) return;
+    const res = await fetcher("/mongodb/api/insertMany", { connStr, db: activeDb, collection: activeColl, docs })
     try {
       const ids = res?.insertedIds
       if (ids) {
@@ -225,23 +221,84 @@ export default function MongoManagerPage() {
   }
 
   const handleReorderTabs = (activeId: string, overId: string) => {
-    setDocTabs((tabs) => {
+    setCollectionTabs((tabs) => {
       const oldIndex = tabs.findIndex((t) => t.id === activeId)
       const newIndex = tabs.findIndex((t) => t.id === overId)
 
-      // Ensure that pinned items can only be reordered with other pinned items,
-      // and unpinned with unpinned.
       if (tabs[oldIndex].isPinned !== tabs[newIndex].isPinned) {
-        return tabs; // Don't allow moving between groups via drag
+        return tabs;
       }
 
       return arrayMove(tabs, oldIndex, newIndex)
     })
   }
 
-  // NEW: Handler for pinning/unpinning a tab
+  const handleOpenCollectionTab = (db: string, coll: string) => {
+    const tabId = `${db}:${coll}`;
+    if (!collectionTabs.some(t => t.id === tabId)) {
+      setCollectionTabs(prev => [...prev, { id: tabId, db, collection: coll, isPinned: false }]);
+    }
+    setActiveTabId(tabId);
+    setSelectedDb(db); // Keep sidebar selection in sync
+  }
+
+  const handleCloseTab = (tabId: string) => {
+    const tabIndex = collectionTabs.findIndex(t => t.id === tabId);
+    setCollectionTabs(prev => prev.filter(t => t.id !== tabId));
+
+    if (activeTabId === tabId) {
+      const nextTab = collectionTabs[tabIndex - 1] || collectionTabs[tabIndex + 1];
+      setActiveTabId(nextTab?.id);
+    }
+  }
+
+  const handleCreateCollection = async () => {
+    if (!newCollName || !createCollDialog.db) return;
+    try {
+      await fetcher("/mongodb/api/collections/create", {
+        connStr,
+        db: createCollDialog.db,
+        name: newCollName
+      });
+      mutate(["/mongodb/api/collections", { connStr, db: createCollDialog.db }]); // More specific mutation
+      setCreateCollDialog({ open: false, db: "" });
+      setNewCollName("");
+    } catch (error) {
+      console.error("Failed to create collection:", error);
+    }
+  }
+
+  const handleDropDatabase = async () => {
+    if (confirmDbName !== dropDbDialog.db) return;
+    try {
+      await fetcher("/mongodb/api/databases/drop", { connStr, db: dropDbDialog.db });
+      mutate(["/mongodb/api/databases", { connStr }]);
+      // Close any open tabs from the dropped DB
+      setCollectionTabs(tabs => tabs.filter(t => t.db !== dropDbDialog.db));
+      if (activeDb === dropDbDialog.db) {
+          setActiveTabId(undefined);
+      }
+      setDropDbDialog({ open: false, db: "" });
+      setConfirmDbName("");
+    } catch (error) {
+      console.error("Failed to drop database:", error);
+    }
+  }
+
+  const handleDropCollection = async (db: string, coll: string) => {
+    if (confirm(`Are you sure you want to drop the collection "${coll}"?`)) {
+      try {
+        await fetcher("/mongodb/api/collections/drop", { connStr, db, coll });
+        mutate(["/mongodb/api/collections", { connStr, db }]);
+        handleCloseTab(`${db}:${coll}`);
+      } catch (error) {
+        console.error("Failed to drop collection", error);
+      }
+    }
+  }
+
   const handlePinTab = (tabId: string) => {
-    setDocTabs(tabs => {
+    setCollectionTabs(tabs => {
       const tabIndex = tabs.findIndex(t => t.id === tabId);
       if (tabIndex === -1) return tabs;
 
@@ -249,19 +306,15 @@ export default function MongoManagerPage() {
       const isNowPinned = !tabToUpdate.isPinned;
       tabToUpdate.isPinned = isNowPinned;
 
-      // Remove the tab from its current position
       const newTabs = [...tabs];
       newTabs.splice(tabIndex, 1);
 
       if (isNowPinned) {
-        // Find the last pinned tab and insert after it
         const lastPinnedIndex = newTabs.findLastIndex(t => t.isPinned);
         newTabs.splice(lastPinnedIndex + 1, 0, tabToUpdate);
       } else {
-        // Find the first unpinned tab and insert before it
         const firstUnpinnedIndex = newTabs.findIndex(t => !t.isPinned);
         if (firstUnpinnedIndex === -1) {
-          // If all other tabs are pinned, add it to the end
           newTabs.push(tabToUpdate);
         } else {
           newTabs.splice(firstUnpinnedIndex, 0, tabToUpdate);
@@ -272,40 +325,45 @@ export default function MongoManagerPage() {
     })
   }
 
-
   async function runUpdateMany(payload: { filter: any; update: any; upsert?: boolean }) {
-    await fetcher("/mongodb/api/updateMany", { connStr, db: selectedDb, collection: selectedColl, ...payload })
+      if (!activeDb || !activeColl) return;
+    await fetcher("/mongodb/api/updateMany", { connStr, db: activeDb, collection: activeColl, ...payload })
     await reloadFind()
   }
 
   async function runDeleteMany(payload: { filter: any }) {
-    await fetcher("/mongodb/api/deleteMany", { connStr, db: selectedDb, collection: selectedColl, ...payload })
+      if (!activeDb || !activeColl) return;
+    await fetcher("/mongodb/api/deleteMany", { connStr, db: activeDb, collection: activeColl, ...payload })
     await reloadFind()
   }
 
   async function handleUpdateDoc(id: any, update: object) {
-    await fetcher("/mongodb/api/updateOne", { connStr, db: selectedDb, collection: selectedColl, filter: { _id: id }, update })
+      if (!activeDb || !activeColl) return;
+    await fetcher("/mongodb/api/updateOne", { connStr, db: activeDb, collection: activeColl, filter: { _id: id }, update })
     reloadFind()
   }
 
   async function handleDeleteDoc(id: any) {
-    await fetcher("/mongodb/api/deleteOne", { connStr, db: selectedDb, collection: selectedColl, filter: { _id: id } })
+      if (!activeDb || !activeColl) return;
+    await fetcher("/mongodb/api/deleteOne", { connStr, db: activeDb, collection: activeColl, filter: { _id: id } })
     reloadFind()
     reloadCount()
   }
 
   async function handleDuplicateDoc(doc: object) {
+      if (!activeDb || !activeColl) return;
     const { _id, ...insertDoc } = doc
-    await fetcher("/mongodb/api/insertOne", { connStr, db: selectedDb, collection: selectedColl, doc: insertDoc })
+    await fetcher("/mongodb/api/insertOne", { connStr, db: activeDb, collection: activeColl, doc: insertDoc })
     reloadFind()
     reloadCount()
   }
 
   async function handleBulkDelete(ids: any[]) {
+      if (!activeDb || !activeColl) return;
     await fetcher("/mongodb/api/deleteMany", {
       connStr,
-      db: selectedDb,
-      collection: selectedColl,
+      db: activeDb,
+      collection: activeColl,
       filter: { _id: { $in: ids } },
     })
     reloadFind()
@@ -313,46 +371,30 @@ export default function MongoManagerPage() {
   }
 
   const handleRunQuery = () => {
-    setSkip(0) // Go back to page 1
+    setSkip(0)
     reloadFind()
     reloadCount()
   }
 
-  // FIX: The page change handler now correctly triggers a refetch because `skip` is in the SWR key.
   const handlePageChange = (newPage: number) => {
     setSkip((newPage - 1) * limit)
   }
-
 
   function handleConnectionChange(newConnStr: string) {
     if (newConnStr !== connStr) {
       setConnStr(newConnStr)
       setSelectedDb("")
-      setSelectedColl("")
+      setCollectionTabs([]);
+      setActiveTabId(undefined);
       setSkip(0)
       reloadDbs()
     }
   }
 
-  const handleSelectCollection = (db: string, coll: string) => {
-    if (selectedDb !== db || selectedColl !== coll) {
-      setSelectedDb(db)
-      setSelectedColl(coll)
-      setSkip(0)
-    }
-  }
-
-  const handleSelectDocument = (db: string, coll: string, id: string) => {
-    if (!docTabs.some((t) => t.id === id)) {
-      setDocTabs((prev) => [...prev, { id, db, collection: coll }])
-    }
-    setActiveDocId(id)
-    setHighlightId(id)
-  }
-
   async function runAggregate(pipelineText: string) {
+      if (!activeDb || !activeColl) return;
     const pipeline = JSON.parse(pipelineText || "[]")
-    return fetcher("/mongodb/api/aggregate", { connStr, db: selectedDb, collection: selectedColl, pipeline, limit })
+    return fetcher("/mongodb/api/aggregate", { connStr, db: activeDb, collection: activeColl, pipeline, limit })
   }
 
   async function runCommand(commandText: string) {
@@ -365,7 +407,7 @@ export default function MongoManagerPage() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement("a")
     a.href = url
-    a.download = `${selectedDb}-${selectedColl}.json`
+    a.download = `${activeDb}-${activeColl}.json`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -380,6 +422,10 @@ export default function MongoManagerPage() {
     }
     const blob = new Blob([rows.join("\n")], { type: "text/csv" })
     const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `${activeDb}-${activeColl}.csv`
+    a.click()
     URL.revokeObjectURL(url)
   }
 
@@ -402,30 +448,6 @@ export default function MongoManagerPage() {
     if (docs.length) await runInsertMany(docs)
   }
 
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const ce = e as CustomEvent
-      const id = ce?.detail?.id ?? ce?.detail?._id
-      if (id) setHighlightId(String(id))
-    }
-    window.addEventListener("ai-jump-to-doc", handler as EventListener)
-      ; (window as any).__mongoJumpToDoc = (id: string) => window.dispatchEvent(new CustomEvent("ai-jump-to-doc", { detail: { id } }))
-    return () => {
-      window.removeEventListener("ai-jump-to-doc", handler as EventListener)
-      try {
-        delete (window as any).__mongoJumpToDoc
-      } catch { }
-    }
-  }, [])
-
-  const page = Math.floor((skip || 0) / (limit || 1)) + 1
-  function nextPage() {
-    setSkip((s) => (Number.isFinite(s) ? s + limit : limit))
-  }
-  function prevPage() {
-    setSkip((s) => Math.max(0, (Number.isFinite(s) ? s : 0) - limit))
-  }
-
   const { registerAction } = useShortcuts()
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const aiRef = useRef<HTMLDivElement | null>(null)
@@ -433,7 +455,6 @@ export default function MongoManagerPage() {
 
   const [view, setView] = useState({
     connections: true,
-    queryBuilder: true,
     results: true,
     details: true,
     bulkOps: true,
@@ -447,6 +468,7 @@ export default function MongoManagerPage() {
       if (raw) setView((v) => ({ ...v, ...JSON.parse(raw) }))
     } catch { }
   }, [])
+
   useEffect(() => {
     try {
       localStorage.setItem("mongo-manager:view", JSON.stringify(view))
@@ -456,11 +478,11 @@ export default function MongoManagerPage() {
   useEffect(() => {
     const offOpen = registerAction("shortcuts.open-settings", () => setShortcutsOpen(true))
     const offRun = registerAction("mongo.run-query", () => {
-      if (!connStr || !selectedDb || !selectedColl || loadingFind) return
+      if (!connStr || !activeDb || !activeColl || loadingFind) return
       reloadFind()
     })
-    const offNext = registerAction("mongo.page-next", () => nextPage())
-    const offPrev = registerAction("mongo.page-prev", () => prevPage())
+    const offNext = registerAction("mongo.page-next", () => setSkip(s => s + limit))
+    const offPrev = registerAction("mongo.page-prev", () => setSkip(s => Math.max(0, s - limit)))
     const offToggleAI = registerAction("mongo.toggle-ai", () => {
       aiRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" })
       window.dispatchEvent(new CustomEvent("shortcut:mongo.toggle-ai"))
@@ -480,7 +502,7 @@ export default function MongoManagerPage() {
       offBulk()
       offConsole()
     }
-  }, [registerAction, connStr, selectedDb, selectedColl, loadingFind])
+  }, [registerAction, connStr, activeDb, activeColl, loadingFind, limit])
 
 
   const filteredDocs = useMemo(() => {
@@ -490,7 +512,6 @@ export default function MongoManagerPage() {
     return docs.filter((d: any) => JSON.stringify(d).toLowerCase().includes(q))
   }, [findResult?.docs, quickSearch])
 
-  // prettier-ignore
   const viewOptions = [
     ["Sidebar", "connections"], ["Results", "results"],
     ["Details", "details"], ["Bulk", "bulkOps"], ["AI", "ai"]
@@ -593,7 +614,6 @@ export default function MongoManagerPage() {
                   </div>
                 </div>
 
-
                 <div className="rounded-md border bg-background text-card-foreground p-3">
                   <p className="text-sm font-medium">Security & Privacy</p>
                   <ul className="mt-1 text-xs text-muted-foreground list-disc pl-5 space-y-1">
@@ -621,16 +641,19 @@ export default function MongoManagerPage() {
               <SidebarTree
                 connStr={connStr}
                 activeDb={selectedDb}
-                activeColl={selectedColl}
+                activeColl={activeColl}
                 isCollapsed={isSidebarCollapsed}
                 onSelectDatabase={setSelectedDb}
-                onSelectCollection={handleSelectCollection}
-                onSelectDocument={handleSelectDocument}
                 onToggleCollapse={() => {
                   const newCollapsedState = !isSidebarCollapsed
                   setIsSidebarCollapsed(newCollapsedState)
                   setLeftW(newCollapsedState ? 56 : 280)
                 }}
+                onOpenCollectionTab={handleOpenCollectionTab}
+                onShowCreateCollectionDialog={(db) => setCreateCollDialog({ open: true, db })}
+                onShowDropDatabaseDialog={(db) => setDropDbDialog({ open: true, db })}
+                onDropCollection={handleDropCollection}
+
               />
             </aside>
           )}
@@ -646,24 +669,15 @@ export default function MongoManagerPage() {
           )}
 
           <section className="flex-1 min-w-0 flex flex-col">
-            <DocumentTabs
-              tabs={docTabs}
-              activeId={activeDocId}
-              onActivate={(id) => setActiveDocId(id)}
-              onClose={(id) => {
-                setDocTabs((t) => t.filter((x) => x.id !== id))
-                if (activeDocId === id) {
-                  // Activate the previous tab or clear if it was the last one
-                  const closingTabIndex = docTabs.findIndex(t => t.id === id);
-                  const nextActiveTab = docTabs[closingTabIndex - 1] || docTabs[0];
-                  setActiveDocId(nextActiveTab?.id);
-                }
-              }}
-              onReorder={handleReorderTabs} // Pass the new handler
-              onPin={handlePinTab}           // Pass the new handler
-              className="border-b"
+            <CollectionTabs
+              tabs={collectionTabs}
+              activeId={activeTabId}
+              onActivate={setActiveTabId}
+              onClose={handleCloseTab}
+              onReorder={handleReorderTabs}
+              onPin={handlePinTab}
             />
-            {/* LAYOUT SIMPLIFIED: No more grid, results view takes all available space */}
+
             <div className="flex-1 min-h-0">
               {view.results && (
                 <div className="flex flex-col h-full w-full p-3 relative min-w-0">
@@ -673,7 +687,6 @@ export default function MongoManagerPage() {
                       <Search className="h-4 w-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
                     </div>
 
-                    {/* DIALOG FOR QUERY BUILDER */}
                     <Dialog open={isQueryBuilderOpen} onOpenChange={setIsQueryBuilderOpen}>
                       <DialogTrigger asChild>
                         <Button variant="outline" size="sm" className="inline-flex items-center gap-1.5">
@@ -717,7 +730,7 @@ export default function MongoManagerPage() {
                             </div>
                             <Button
                               onClick={handleRunQuery}
-                              disabled={!connStr || !selectedDb || !selectedColl || loadingFind}
+                              disabled={!connStr || !activeDb || !activeColl || loadingFind}
                             >
                               {loadingFind ? "Running…" : "Run Find"}
                             </Button>
@@ -726,7 +739,7 @@ export default function MongoManagerPage() {
                       </DialogContent>
                     </Dialog>
 
-                    <button onClick={() => reloadFind()} disabled={!connStr || !selectedDb || !selectedColl || loadingFind} className="inline-flex items-center gap-1 rounded-md border px-2 py-1.5 text-xs hover:bg-muted disabled:opacity-60" title="Refresh results">
+                    <button onClick={() => reloadFind()} disabled={!connStr || !activeDb || !activeColl || loadingFind} className="inline-flex items-center gap-1 rounded-md border px-2 py-1.5 text-xs hover:bg-muted disabled:opacity-60" title="Refresh results">
                       <RefreshCw className={cn("h-3.5 w-3.5", loadingFind && "animate-spin")} />
                       <span className="hidden sm:inline">Refresh</span>
                     </button>
@@ -734,10 +747,12 @@ export default function MongoManagerPage() {
 
                   {findError && <p className="text-xs text-red-500 break-all mb-2 shrink-0">{String(findError.message || findError)}</p>}
 
-                  <div className="flex-1 min-h-0">
+                    {activeTabId ? (
+                         <div className="flex-1 min-h-0">
                     <DataGrid
+                      key={activeTabId}
                       docs={filteredDocs}
-                      collection={selectedColl}
+                      collection={activeColl!}
                       isLoading={loadingFind}
                       onUpdateDoc={handleUpdateDoc}
                       onDeleteDoc={handleDeleteDoc}
@@ -749,15 +764,16 @@ export default function MongoManagerPage() {
                       onPageChange={handlePageChange}
                     />
                   </div>
+                    ) : (
+                        <div className="flex-1 flex items-center justify-center text-muted-foreground">
+                            Select a collection from the sidebar to begin.
+                        </div>
+                    )}
                 </div>
+                
               )}
             </div>
 
-            {!!activeDocId && connStr && selectedDb && selectedColl && (
-              <div className="border-t p-3 bg-background">
-                <DocumentViewer connectionString={connStr} db={selectedDb} collection={selectedColl} id={activeDocId} />
-              </div>
-            )}
           </section>
 
           {!isMobile && (view.details || view.bulkOps || view.ai) && (
@@ -776,13 +792,13 @@ export default function MongoManagerPage() {
               className={isMobile ? "border-t p-3 space-y-3" : "shrink-0 p-3 space-y-3 overflow-y-auto"}
             >
               {view.details && <DetailsPanel server={serverInfo} serverLoading={loadingServerInfo} serverError={serverError?.message || serverError} dbStats={dbStats} dbLoading={loadingDbStats} dbError={dbStatsError?.message || dbStatsError} collStats={collStats} collLoading={loadingCollStats} collError={collStatsError?.message || collStatsError} indexes={idxList?.indexes ?? []} indexesLoading={loadingIndexes} indexesError={indexesError?.message || indexesError} />}
-              {view.bulkOps && <BulkOps onInsertMany={runInsertMany} onUpdateMany={runUpdateMany} onDeleteMany={runDeleteMany} onImportFile={handleImportFile} disabled={!connStr || !selectedDb || !selectedColl} />}
+              {view.bulkOps && <BulkOps onInsertMany={runInsertMany} onUpdateMany={runUpdateMany} onDeleteMany={runDeleteMany} onImportFile={handleImportFile} disabled={!connStr || !activeDb || !activeColl} />}
               {view.ai && (
                 <div ref={aiRef} id="ai-panel">
                   <AIAssistant
                     connStrPresent={!!connStr}
-                    selectedDb={selectedDb}
-                    selectedColl={selectedColl}
+                    selectedDb={activeDb}
+                    selectedColl={activeColl}
                     collections={colls?.collections ?? []}
                     docs={(findResult?.docs ?? []).slice(0, 50)}
                     onExecutePlan={async (actions) => {
@@ -806,7 +822,7 @@ export default function MongoManagerPage() {
 
       <TerminalDock>
         <div ref={cmdRef} className="p-3">
-          <CommandConsole onRun={runCommand} disabled={!connStr || !selectedDb} />
+          <CommandConsole onRun={runCommand} selectedDB={selectedDb} disabled={!connStr || !selectedDb} />
         </div>
       </TerminalDock>
 
@@ -821,6 +837,43 @@ export default function MongoManagerPage() {
           </div>
         </div>
       </footer>
+  
+      <Dialog open={createCollDialog.open} onOpenChange={(open) => setCreateCollDialog({ ...createCollDialog, open })}>
+        <DialogContent>
+            <DialogHeader>
+                <DialogTitle>Create New Collection in '{createCollDialog.db}'</DialogTitle>
+            </DialogHeader>
+            <div className="py-4">
+                <Label htmlFor="coll-name">Collection Name</Label>
+                <Input id="coll-name" value={newCollName} onChange={(e) => setNewCollName(e.target.value)} placeholder="e.g., users, products" />
+            </div>
+            <DialogFooter>
+                <Button variant="outline" onClick={() => setCreateCollDialog({ open: false, db: "" })}>Cancel</Button>
+                <Button onClick={handleCreateCollection} disabled={!newCollName}>Create</Button>
+            </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      
+      <Dialog open={dropDbDialog.open} onOpenChange={(open) => setDropDbDialog({ ...dropDbDialog, open })}>
+          <DialogContent>
+              <DialogHeader><DialogTitle>Drop Database</DialogTitle></DialogHeader>
+              <div className="py-4 space-y-4">
+                  <Alert variant="destructive">
+                      <Terminal className="h-4 w-4" />
+                      <AlertTitle>This action is irreversible!</AlertTitle>
+                      <AlertDescription>
+                          You are about to delete the entire database <strong>{dropDbDialog.db}</strong>, including all of its collections, documents, and indexes.
+                      </AlertDescription>
+                  </Alert>
+                  <Label>To confirm, please type the name of the database:</Label>
+                  <Input value={confirmDbName} onChange={(e) => setConfirmDbName(e.target.value)} placeholder={dropDbDialog.db} />
+              </div>
+              <DialogFooter>
+                  <Button variant="outline" onClick={() => setDropDbDialog({ open: false, db: "" })}>Cancel</Button>
+                  <Button variant="destructive" onClick={handleDropDatabase} disabled={confirmDbName !== dropDbDialog.db}>Drop Database</Button>
+              </DialogFooter>
+          </DialogContent>
+      </Dialog>
     </main>
   )
 }

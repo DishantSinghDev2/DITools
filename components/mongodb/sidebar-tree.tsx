@@ -14,11 +14,20 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   AlertTriangle,
+  Plus,
+  Trash2,
+  ExternalLink,
+  MoreHorizontal
 } from "lucide-react"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
 import { AnimatePresence, motion } from "framer-motion"
 
-// --- Type Definitions ---
 type DbItem = { name: string }
 type CollItem = { name: string }
 type ApiResponse<T> = { [key: string]: T[] }
@@ -29,9 +38,11 @@ type SidebarTreeProps = {
   activeColl?: string
   isCollapsed: boolean
   onSelectDatabase: (db: string) => void
-  onSelectCollection: (db: string, coll: string) => void
-  onSelectDocument: (db: string, coll: string, id: string) => void
   onToggleCollapse: () => void
+  onOpenCollectionTab: (db: string, coll: string) => void;
+  onShowCreateCollectionDialog: (db: string) => void;
+  onShowDropDatabaseDialog: (db: string) => void;
+  onDropCollection: (db: string, coll: string) => void;
 }
 
 type DatabaseNodeProps = {
@@ -42,14 +53,18 @@ type DatabaseNodeProps = {
   activeColl?: string
   onToggle: () => void
   onSelectDatabase: (db: string) => void
-  onSelectCollection: (db: string, coll: string) => void
+  onOpenCollectionTab: (db: string, coll: string) => void;
+  onShowCreateCollectionDialog: (db: string) => void;
+  onShowDropDatabaseDialog: (db: string) => void;
+  onDropCollection: (db: string, coll: string) => void;
 }
 
 type CollectionNodeProps = {
   dbName: string
   coll: CollItem
   isActive: boolean
-  onSelectCollection: (db: string, coll: string) => void
+  onOpenCollectionTab: (db: string, coll: string) => void;
+  onDropCollection: (db: string, coll: string) => void;
 }
 
 type ErrorMessageProps = {
@@ -57,7 +72,6 @@ type ErrorMessageProps = {
   isNested?: boolean
 }
 
-// --- Utility Functions ---
 const fetcher = async <T,>(url: string, body: object): Promise<T> => {
   const res = await fetch(url, {
     method: "POST",
@@ -85,15 +99,16 @@ const parseHost = (str: string): string => {
   }
 }
 
-// --- Main Component ---
 export function SidebarTree({
   connStr,
+  onOpenCollectionTab,
+  onShowCreateCollectionDialog,
+  onShowDropDatabaseDialog,
+  onDropCollection,
   activeDb,
   activeColl,
   isCollapsed,
   onSelectDatabase,
-  onSelectCollection,
-  onSelectDocument,
   onToggleCollapse,
 }: SidebarTreeProps) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
@@ -138,18 +153,10 @@ export function SidebarTree({
 
   if (isCollapsed) {
     return (
-      <aside
-        className="w-14 shrink-0 border-r bg-background h-full"
-        aria-label="Collections Sidebar (Collapsed)"
-      >
+      <aside className="w-14 shrink-0 border-r bg-background h-full">
         <TooltipProvider delayDuration={0}>
           <div className="flex flex-col items-center p-2 space-y-2">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={onToggleCollapse}
-              title="Expand Sidebar"
-            >
+            <Button variant="ghost" size="icon" onClick={onToggleCollapse}>
               <PanelLeftOpen className="h-5 w-5" />
             </Button>
             <Button
@@ -157,7 +164,6 @@ export function SidebarTree({
               size="icon"
               onClick={handleRefresh}
               disabled={!connStr || isLoading}
-              title="Refresh"
             >
               <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
             </Button>
@@ -183,7 +189,7 @@ export function SidebarTree({
   }
 
   return (
-    <aside className="w-full h-full bg-background flex flex-col" aria-label="Collections Sidebar">
+    <aside className="w-full h-full bg-background flex flex-col">
       <div className="border-b p-2">
         <div className="flex items-start justify-between">
           <div className="min-w-0">
@@ -193,13 +199,7 @@ export function SidebarTree({
             </div>
             <div className="text-xs text-muted-foreground">MongoDB v{version}</div>
           </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onToggleCollapse}
-            title="Collapse Sidebar"
-            className="shrink-0"
-          >
+          <Button variant="ghost" size="icon" onClick={onToggleCollapse}>
             <PanelLeftClose className="h-5 w-5" />
           </Button>
         </div>
@@ -218,7 +218,6 @@ export function SidebarTree({
             size="icon"
             onClick={handleRefresh}
             disabled={!connStr || isLoading}
-            title="Refresh"
           >
             <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
           </Button>
@@ -226,16 +225,10 @@ export function SidebarTree({
       </div>
 
       <div className="p-1 overflow-y-auto flex-1">
-        {dbsLoading && (
-          <div className="text-xs text-muted-foreground px-2 py-1">
-            Loading databases...
-          </div>
-        )}
+        {dbsLoading && <div className="text-xs text-muted-foreground px-2 py-1">Loading databases...</div>}
         {dbsError && <ErrorMessage message={dbsError.message} />}
         {!dbsLoading && !dbsError && filteredDbs.length === 0 && (
-          <div className="text-xs text-muted-foreground px-2 py-1">
-            No databases found.
-          </div>
+          <div className="text-xs text-muted-foreground px-2 py-1">No databases found.</div>
         )}
         {filteredDbs.length > 0 && (
           <ul className="space-y-0.5">
@@ -247,11 +240,12 @@ export function SidebarTree({
                 isOpen={!!expanded[db.name]}
                 isActive={activeDb === db.name}
                 activeColl={activeColl}
-                onToggle={() =>
-                  setExpanded((prev) => ({ ...prev, [db.name]: !prev[db.name] }))
-                }
+                onToggle={() => setExpanded((prev) => ({ ...prev, [db.name]: !prev[db.name] }))}
                 onSelectDatabase={onSelectDatabase}
-                onSelectCollection={onSelectCollection}
+                onOpenCollectionTab={onOpenCollectionTab}
+                onShowCreateCollectionDialog={onShowCreateCollectionDialog}
+                onShowDropDatabaseDialog={onShowDropDatabaseDialog}
+                onDropCollection={onDropCollection}
               />
             ))}
           </ul>
@@ -261,22 +255,21 @@ export function SidebarTree({
   )
 }
 
-// --- Sub-Components ---
-
 function DatabaseNode({
   db,
+  onOpenCollectionTab,
+  onShowCreateCollectionDialog,
+  onShowDropDatabaseDialog,
+  onDropCollection,
   connStr,
   isOpen,
   isActive,
   activeColl,
   onToggle,
   onSelectDatabase,
-  onSelectCollection,
 }: DatabaseNodeProps) {
   const { data: collsResponse, error, isLoading } = useSWR<ApiResponse<CollItem | string>>(
-    connStr && db.name && isOpen
-      ? ["/mongodb/api/collections", { connStr, db: db.name }]
-      : null,
+    connStr && db.name && isOpen ? ["/mongodb/api/collections", { connStr, db: db.name }] : null,
     ([url, body]) => fetcher<ApiResponse<CollItem | string>>(url, body),
     { revalidateOnFocus: false },
   )
@@ -293,36 +286,38 @@ function DatabaseNode({
 
   return (
     <li>
-      <div
-        className={cn(
-          "flex items-center gap-1.5 px-2 py-1.5 hover:bg-muted/50 rounded cursor-pointer",
-          isActive && "bg-muted",
-        )}
-        onClick={handleClick}
+      <div className={cn("group flex items-center gap-1.5 px-2 py-1.5 h-8 hover:bg-muted/50 rounded cursor-pointer", isActive && "bg-muted")}
       >
-        {isOpen ? (
-          <ChevronDown className="h-4 w-4" />
-        ) : (
-          <ChevronRight className="h-4 w-4" />
-        )}
-        <Database className="h-4 w-4 text-amber-600" />
-        <span className="text-sm font-medium flex-1 truncate">{db.name}</span>
+        <button onClick={handleClick} className="flex items-center flex-1 min-w-0 gap-1.5 h-8">
+          {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+          <Database className="h-4 w-4 text-amber-600" />
+          <span className="text-sm font-medium flex-1 truncate">{db.name}</span>
+        </button>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6 opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto transition-opacity"
+            onClick={() => onShowCreateCollectionDialog(db.name)}
+          >
+            <Plus className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6 opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto transition-opacity hover:bg-destructive/10 hover:text-destructive"
+            onClick={() => onShowDropDatabaseDialog(db.name)}
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
 
       <AnimatePresence initial={false}>
         {isOpen && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            className="overflow-hidden"
-          >
+          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
             <ul className="ml-6 mt-1 space-y-1 pl-1 border-l border-dashed">
-              {isLoading && (
-                <li className="text-xs text-muted-foreground px-2 py-1">
-                  Loading...
-                </li>
-              )}
+              {isLoading && <li className="text-xs text-muted-foreground px-2 py-1">Loading...</li>}
               {error && <ErrorMessage message={error.message} isNested />}
               {collections.map((c) => (
                 <CollectionNode
@@ -330,13 +325,12 @@ function DatabaseNode({
                   dbName={db.name}
                   coll={c}
                   isActive={isActive && activeColl === c.name}
-                  onSelectCollection={onSelectCollection}
+                  onOpenCollectionTab={onOpenCollectionTab}
+                  onDropCollection={onDropCollection}
                 />
               ))}
               {!isLoading && collections.length === 0 && (
-                <li className="text-xs text-muted-foreground px-2 py-1">
-                  No collections
-                </li>
+                <li className="text-xs text-muted-foreground px-2 py-1">No collections</li>
               )}
             </ul>
           </motion.div>
@@ -346,23 +340,36 @@ function DatabaseNode({
   )
 }
 
-function CollectionNode({
-  dbName,
-  coll,
-  isActive,
-  onSelectCollection,
-}: CollectionNodeProps) {
+function CollectionNode({ dbName, coll, isActive, onOpenCollectionTab, onDropCollection }: CollectionNodeProps) {
   return (
     <li>
-      <div
-        className={cn(
-          "flex items-center gap-1.5 px-2 py-1.5 hover:bg-primary/10 rounded cursor-pointer",
-          isActive && "bg-primary/15 hover:bg-primary/15 text-primary font-semibold",
-        )}
-        onClick={() => onSelectCollection(dbName, coll.name)}
+      <div className={cn("group flex items-center gap-1.5 pr-1 pl-2 py-1 h-8 hover:bg-muted/50 rounded", isActive && "bg-primary/10")}
       >
-        <Folder className="h-4 w-4 text-sky-600 shrink-0" />
-        <span className="text-sm flex-1 truncate">{coll.name}</span>
+        <button onClick={() => onOpenCollectionTab(dbName, coll.name)} className="flex items-center flex-1 min-w-0 gap-1.5 h-8">
+          <Folder className="h-4 w-4 text-sky-600 shrink-0" />
+          <span className={cn("text-sm flex-1 truncate text-left", isActive && "text-primary font-semibold")}>{coll.name}</span>
+        </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto transition-opacity"
+            >
+              <MoreHorizontal className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="right" align="start" className="min-w-[160px]">
+            <DropdownMenuItem onClick={() => onOpenCollectionTab(dbName, coll.name)}>
+              <ExternalLink className="h-4 w-4 mr-2" />
+              Open in Tab
+            </DropdownMenuItem>
+            <DropdownMenuItem className="text-red-500" onClick={() => onDropCollection(dbName, coll.name)}>
+              <Trash2 className="h-4 w-4 mr-2" />
+              Drop Collection
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </li>
   )
@@ -370,11 +377,7 @@ function CollectionNode({
 
 function ErrorMessage({ message, isNested = false }: ErrorMessageProps) {
   return (
-    <div
-      className={cn(
-        "flex items-center gap-2 text-xs text-red-500 p-2",
-        isNested ? "ml-2" : "bg-red-500/10 rounded-md",
-      )}
+    <div className={cn("flex items-center gap-2 text-xs text-red-500 p-2", isNested ? "ml-2" : "bg-red-500/10 rounded-md")}
     >
       <AlertTriangle className="h-4 w-4 shrink-0" />
       <span className="break-all">{message}</span>
