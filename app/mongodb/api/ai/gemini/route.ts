@@ -18,8 +18,7 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // IMPORTANT: We NEVER persist or log the connection string, DB data, or prompts.
-    // The grantedData is user-selected and already minimized on the client.
+    // sanitize user-supplied pieces before sending to model
     const sanitized = {
       prompt: typeof prompt === "string" ? prompt : "",
       grants: redactPayloadForAI(grants),
@@ -39,14 +38,14 @@ export async function POST(req: NextRequest) {
       'with the language "json" and the heading AI_PLAN that the UI can parse. ' +
       "The AI_PLAN must be a JSON object with optional keys: actions[], each action has: " +
       '{ "type": "find|aggregate|insertMany|updateMany|deleteMany|command", "db": "...", "collection": "...", "params": {...}, "reason": "..." }. ' +
-      "When actions affect specific documents, include an `ids` array with stringified _id values when available. " + // added request
+      "When actions affect specific documents, include an `ids` array with stringified _id values when available. " +
       "Keep JSON small and safe (no secrets)."
 
-    const model = google("models/gemini-1.5-pro-latest", {
-      apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY
-    })
+    // create the model via the Google provider (the provider reads GOOGLE_GENERATIVE_AI_API_KEY automatically)
+    // NOTE: the model id is the provider-style id (e.g. 'gemini-1.5-pro-latest') — not 'models/...' path.
+    const model = google("gemini-1.5-pro-latest")
 
-    // Build a compact context for the model
+    // compact context for the model
     const context = [
       "Context: MongoDB Manager (browser-first). Stateless APIs. User controls all permissions.",
       "User preferences: " + JSON.stringify(sanitized.preferences || {}),
@@ -56,14 +55,16 @@ export async function POST(req: NextRequest) {
       "Instruction: Respond step-by-step and produce an optional AI_PLAN JSON for executable actions.",
     ].join("\n\n")
 
-    const result = await streamText({
+    // streamText returns a StreamTextResult. Do NOT await the streaming result; return its toDataStreamResponse()
+    const result = streamText({
       model,
       system,
       prompt: `${context}\n\nUser: ${sanitized.prompt}`,
     })
 
-    // Stream back to the client
-    return result.toAIStreamResponse()
+    // Modern AI SDK: send the streaming response back to the client using toDataStreamResponse().
+    // This replaces older helpers like toAIStreamResponse / pipeAIStreamToResponse.
+    return result.toTextStreamResponse()
   } catch (err: any) {
     return new Response(JSON.stringify({ error: String(err?.message || err) }), {
       status: 500,

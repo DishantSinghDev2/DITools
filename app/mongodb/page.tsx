@@ -843,7 +843,7 @@ export default function MongoManagerPage() {
             <DialogHeader>
                 <DialogTitle>Create New Collection in '{createCollDialog.db}'</DialogTitle>
             </DialogHeader>
-            <div className="py-4">
+            <div className="py-4 space-y-3">
                 <Label htmlFor="coll-name">Collection Name</Label>
                 <Input id="coll-name" value={newCollName} onChange={(e) => setNewCollName(e.target.value)} placeholder="e.g., users, products" />
             </div>
@@ -861,8 +861,8 @@ export default function MongoManagerPage() {
                   <Alert variant="destructive">
                       <Terminal className="h-4 w-4" />
                       <AlertTitle>This action is irreversible!</AlertTitle>
-                      <AlertDescription>
-                          You are about to delete the entire database <strong>{dropDbDialog.db}</strong>, including all of its collections, documents, and indexes.
+                      <AlertDescription className="inline">
+                          You are about to delete the entire database <strong className="inline">{dropDbDialog.db}</strong>, including all of its collections, documents, and indexes.
                       </AlertDescription>
                   </Alert>
                   <Label>To confirm, please type the name of the database:</Label>

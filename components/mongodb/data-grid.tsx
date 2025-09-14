@@ -6,8 +6,18 @@ import { DataGridToolbar } from "./data-grid-toolbar"
 import { JsonView } from "./views/json-view"
 import { TableView } from "./views/table-view"
 import { ListView } from "./views/list-view"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
 
-// --- Type Definitions ---
 export type ViewMode = "json" | "table" | "list"
 export type MongoDoc = { _id: any; [key: string]: any }
 
@@ -15,12 +25,10 @@ export interface DataGridProps {
   docs: MongoDoc[]
   collection: string
   isLoading: boolean
-  // CRUD Handlers
   onUpdateDoc: (id: any, update: object) => Promise<void>
   onDeleteDoc: (id: any) => Promise<void>
   onDuplicateDoc: (doc: MongoDoc) => Promise<void>
   onBulkDelete: (ids: any[]) => Promise<void>
-  // Pagination
   page: number
   limit: number
   totalDocs: number
@@ -42,23 +50,26 @@ export function DataGrid({
 }: DataGridProps) {
   const [view, setView] = useState<ViewMode>("json")
   const [selectedIds, setSelectedIds] = useState<Set<any>>(new Set())
+  const [confirmOpen, setConfirmOpen] = useState(false)
 
   const handleToggleSelection = (id: any) => {
     const newSelection = new Set(selectedIds)
-    if (newSelection.has(id)) {
-      newSelection.delete(id)
-    } else {
-      newSelection.add(id)
-    }
+    newSelection.has(id) ? newSelection.delete(id) : newSelection.add(id)
     setSelectedIds(newSelection)
   }
-  
+
   const handleToggleAll = () => {
-    if(selectedIds.size === docs.length) {
-        setSelectedIds(new Set())
+    if (selectedIds.size === docs.length) {
+      setSelectedIds(new Set())
     } else {
-        setSelectedIds(new Set(docs.map(d => d._id)))
+      setSelectedIds(new Set(docs.map((d) => d._id)))
     }
+  }
+
+  const handleConfirmBulkDelete = async () => {
+    await onBulkDelete(Array.from(selectedIds))
+    setSelectedIds(new Set())
+    setConfirmOpen(false)
   }
 
   const renderContent = () => {
@@ -71,7 +82,14 @@ export function DataGrid({
 
     switch (view) {
       case "table":
-        return <TableView docs={docs} selectedIds={selectedIds} onToggleSelection={handleToggleSelection} onUpdateDoc={onUpdateDoc} />
+        return (
+          <TableView
+            docs={docs}
+            selectedIds={selectedIds}
+            onToggleSelection={handleToggleSelection}
+            onUpdateDoc={onUpdateDoc}
+          />
+        )
       case "list":
         return <ListView docs={docs} selectedIds={selectedIds} onToggleSelection={handleToggleSelection} />
       case "json":
@@ -100,7 +118,7 @@ export function DataGrid({
         view={view}
         onViewChange={setView}
         selectedCount={selectedIds.size}
-        onBulkDelete={() => onBulkDelete(Array.from(selectedIds))}
+        onBulkDelete={() => setConfirmOpen(true)}
         page={page}
         limit={limit}
         totalDocs={totalDocs}
@@ -108,7 +126,26 @@ export function DataGrid({
         isAllSelected={docs.length > 0 && selectedIds.size === docs.length}
         onToggleAll={handleToggleAll}
       />
+
       <div className="flex-1 overflow-y-auto">{renderContent()}</div>
+
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {selectedIds.size} documents?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. Are you sure you want to permanently delete the selected documents from{" "}
+              <span className="font-semibold">{collection}</span>?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmBulkDelete} className="bg-red-600 hover:bg-red-700">
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

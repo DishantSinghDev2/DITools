@@ -39,6 +39,12 @@ export function CommandConsole({ onRun, disabled, selectedDB }: CommandConsolePr
   const handleKeyDown = (e: any) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
+      if (disabled && !selectedDB) {
+        setHistory((prev) => [
+        ...prev,
+        { cmd: cmd, res: { error: 'Plese select a database first' } },
+      ])
+      }
       if (!disabled && !running) runCommand(cmd)
     }
     const pairs: Record<string, string> = {
@@ -94,7 +100,7 @@ export function CommandConsole({ onRun, disabled, selectedDB }: CommandConsolePr
         <div className="flex items-start">
           <span className="text-green-500 mr-2 mt-1 flex items-center gap-1">
             {selectedDB ? selectedDB : `mongodb`}
-            <ChevronRight className="inline w-4 h-4 text-primary mb-0.5" />
+            <ChevronRight className="inline w-4 h-4 text-primary ml-[-4px]" />
           </span>
           <div className="flex-1">
             <Editor

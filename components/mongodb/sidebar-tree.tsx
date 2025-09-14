@@ -122,7 +122,7 @@ export function SidebarTree({
 
   const { data: serverInfo, mutate: reloadServer, isLoading: serverLoading } = useSWR<{ version: string }>(
     connStr ? ["/mongodb/api/serverInfo", { connStr }] : null,
-    ([url, body]) => fetcher<{ version: string }>(url, body),
+    ([url, body]) => fetcher(url, body),
   )
 
   const { data: dbsResponse, error: dbsError, isLoading: dbsLoading, mutate: reloadDbs } = useSWR<ApiResponse<DbItem | string>>(
@@ -149,7 +149,7 @@ export function SidebarTree({
 
   const isLoading = dbsLoading || serverLoading
   const host = parseHost(connStr)
-  const version = serverInfo?.version || "..."
+  const version = serverInfo?.buildInfo?.version || "..."
 
   if (isCollapsed) {
     return (
@@ -291,7 +291,7 @@ function DatabaseNode({
         <button onClick={handleClick} className="flex items-center flex-1 min-w-0 gap-1.5 h-8">
           {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
           <Database className="h-4 w-4 text-amber-600" />
-          <span className="text-sm font-medium flex-1 truncate">{db.name}</span>
+          <span className="text-sm font-medium text-left flex-1 truncate">{db.name}</span>
         </button>
         <div className="flex items-center gap-1">
           <Button
